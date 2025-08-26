@@ -129,6 +129,20 @@ Sizes = [(H, W) for H in Hs for W in Ws]
 for H, W in Sizes:
     print("-" * 85)
     print(" " * 40 + f"H={H}, W={W}")
+
+    # 创建uint8类型的测试张量
+    a_u8 = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+    b_u8 = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+    c_u8 = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+    
+    # 运行uint8类型的性能基准测试
+    run_benchmark(lib.elementwise_add_u8, a_u8, b_u8, "u8", c_u8)
+    run_benchmark(lib.elementwise_add_u8x4, a_u8, b_u8, "u8x4", c_u8)
+    run_benchmark(lib.elementwise_add_u8x4v, a_u8, b_u8, "u8x4v", c_u8)
+    run_benchmark(lib.elementwise_add_u8x16_pack, a_u8, b_u8, "u8x16pack", c_u8)
+    run_benchmark(partial(torch.add, out=c_u8), a_u8, b_u8, "u8_torch")
+
+    print("-" * 85)
     
     # 创建测试用的随机张量
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()

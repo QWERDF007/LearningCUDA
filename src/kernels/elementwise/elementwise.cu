@@ -10,9 +10,11 @@
 
 #define THREADS 512
 
+#define UCHAR4(value)      (reinterpret_cast<uchar4 *>(&(value))[0])
 #define FLOAT4(value)      (reinterpret_cast<float4 *>(&(value))[0])
 #define HALF2(value)       (reinterpret_cast<half2 *>(&(value))[0])
 #define LDST128BITS(value) (reinterpret_cast<float4 *>(&(value))[0])
+#define UINT(value)        (reinterpret_cast<uint32_t *>(&(value))[0])
 
 /**
  * @brief 逐元素加法操作, 一次处理1个float元素
@@ -141,15 +143,15 @@ __global__ void elementwise_add_f16x8_kernel(half *a, half *b, half *c, int N)
     // 从输入数组a中加载4个half2向量（共8个half元素）
     // 使用HALF2宏进行向量化内存访问，提高内存带宽利用率
     half2 reg_a_0 = HALF2(a[idx + 0]); // 加载第1-2个元素
-    half2 reg_a_1 = HALF2(a[idx + 2]); // 加载第3-4个元素
-    half2 reg_a_2 = HALF2(a[idx + 4]); // 加载第5-6个元素
-    half2 reg_a_3 = HALF2(a[idx + 6]); // 加载第7-8个元素
+    half2 reg_a_1 = HALF2(a[idx + 2]); // 3-4
+    half2 reg_a_2 = HALF2(a[idx + 4]); // 5-6
+    half2 reg_a_3 = HALF2(a[idx + 6]); // 7-8
 
     // 从输入数组b中加载4个half2向量（共8个half元素）
-    half2 reg_b_0 = HALF2(b[idx + 0]); // 加载第1-2个元素
-    half2 reg_b_1 = HALF2(b[idx + 2]); // 加载第3-4个元素
-    half2 reg_b_2 = HALF2(b[idx + 4]); // 加载第5-6个元素
-    half2 reg_b_3 = HALF2(b[idx + 6]); // 加载第7-8个元素
+    half2 reg_b_0 = HALF2(b[idx + 0]);
+    half2 reg_b_1 = HALF2(b[idx + 2]);
+    half2 reg_b_2 = HALF2(b[idx + 4]);
+    half2 reg_b_3 = HALF2(b[idx + 6]);
 
     // 声明4个half2结果向量，用于存储计算结果
     half2 reg_c_0, reg_c_1, reg_c_2, reg_c_3;
@@ -159,18 +161,18 @@ __global__ void elementwise_add_f16x8_kernel(half *a, half *b, half *c, int N)
     reg_c_0.y = __hadd(reg_a_0.y, reg_b_0.y); // 第2个元素相加
 
     // 对第2个half2向量执行逐元素加法运算
-    reg_c_1.x = __hadd(reg_a_1.x, reg_b_1.x); // 第3个元素相加
-    reg_c_1.y = __hadd(reg_a_1.y, reg_b_1.y); // 第4个元素相加
+    reg_c_1.x = __hadd(reg_a_1.x, reg_b_1.x); // 3
+    reg_c_1.y = __hadd(reg_a_1.y, reg_b_1.y); // 4
 
     // 对第3个half2向量执行逐元素加法运算
-    reg_c_2.x = __hadd(reg_a_2.x, reg_b_2.x); // 第5个元素相加
-    reg_c_2.y = __hadd(reg_a_2.y, reg_b_2.y); // 第6个元素相加
+    reg_c_2.x = __hadd(reg_a_2.x, reg_b_2.x); // 5
+    reg_c_2.y = __hadd(reg_a_2.y, reg_b_2.y); // 6
 
     // 对第4个half2向量执行逐元素加法运算
-    reg_c_3.x = __hadd(reg_a_3.x, reg_b_3.x); // 第7个元素相加
-    reg_c_3.y = __hadd(reg_a_3.y, reg_b_3.y); // 第8个元素相加
+    reg_c_3.x = __hadd(reg_a_3.x, reg_b_3.x); // 7
+    reg_c_3.y = __hadd(reg_a_3.y, reg_b_3.y); // 8
 
-    // 边界检查并写回结果：确保不会越界访问内存
+    // 边界检查并写回结果
     // 由于每个线程处理8个元素，需要分别检查每对元素是否在有效范围内
     if ((idx + 0) < N)
     {
@@ -178,15 +180,15 @@ __global__ void elementwise_add_f16x8_kernel(half *a, half *b, half *c, int N)
     }
     if ((idx + 2) < N)
     {
-        HALF2(c[idx + 2]) = reg_c_1; // 写回第3-4个元素的结果
+        HALF2(c[idx + 2]) = reg_c_1; // 3-4
     }
     if ((idx + 4) < N)
     {
-        HALF2(c[idx + 4]) = reg_c_2; // 写回第5-6个元素的结果
+        HALF2(c[idx + 4]) = reg_c_2; // 5-6
     }
     if ((idx + 6) < N)
     {
-        HALF2(c[idx + 6]) = reg_c_3; // 写回第7-8个元素的结果
+        HALF2(c[idx + 6]) = reg_c_3; // 7-8
     }
 }
 
@@ -212,8 +214,8 @@ __global__ void elementwise_add_f16x8_pack_kernel(half *a, half *b, half *c, int
     // 使用128位内存访问指令一次性加载8个half元素
     // LDST128BITS宏将连续的8个half元素重新解释为128位数据进行加载
     // 这样可以减少内存访问次数，提高内存带宽利用率
-    LDST128BITS(pack_a[0]) = LDST128BITS(a[idx]); // 从数组a加载128位数据
-    LDST128BITS(pack_b[0]) = LDST128BITS(b[idx]); // 从数组b加载128位数据
+    LDST128BITS(pack_a[0]) = LDST128BITS(a[idx]);
+    LDST128BITS(pack_b[0]) = LDST128BITS(b[idx]);
 
     // 使用编译器指令展开循环，减少循环开销
 #pragma unroll
@@ -240,6 +242,147 @@ __global__ void elementwise_add_f16x8_pack_kernel(half *a, half *b, half *c, int
         for (int i = 0; idx + i < N; i++)
         {
             c[idx + i] = __hadd(a[idx + i], b[idx + i]);
+        }
+    }
+}
+
+/**
+ * @brief 8位无符号整数逐元素加法CUDA核函数
+ * 
+ * @param a 输入数组A的指针（uint8_t精度）
+ * @param b 输入数组B的指针（uint8_t精度）
+ * @param c 输出数组C的指针，存储结果（uint8_t精度）
+ * @param N 数组元素总数
+ */
+__global__ void elementwise_add_u8_kernel(uint8_t *a, uint8_t *b, uint8_t *c, const int N)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= N)
+        return;
+
+    c[idx] = a[idx] + b[idx];
+}
+
+/**
+ * @brief 8位无符号整数向量化逐元素加法CUDA核函数
+ * 每个线程处理4个连续的uint8_t元素，通过向量化操作提高内存访问效率和计算吞吐量。
+ * 
+ * @param a 输入数组A的指针（uint8_t精度）
+ * @param b 输入数组B的指针（uint8_t精度）
+ * @param c 输出数组C的指针，存储结果（uint8_t精度）
+ * @param N 数组元素总数
+ */
+__global__ void elementwise_add_u8x4_kernel(uint8_t *a, uint8_t *b, uint8_t *c, const int N)
+{
+    // 计算当前线程处理的起始索引，每个线程处理4个连续的uint8_t元素
+    int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
+
+    if (idx >= N)
+        return;
+
+    // 使用32位内存访问指令一次性加载4个uint8_t元素
+    // UCHAR4宏将连续的4个uint8_t元素重新解释为uchar4向量进行加载
+    uchar4 reg_a = UCHAR4(a[idx]);
+    uchar4 reg_b = UCHAR4(b[idx]);
+    uchar4 reg_c;
+
+    // 对uchar4向量的每个分量执行加法运算
+    // 这些运算可以并行执行，提高计算效率
+    reg_c.x = reg_a.x + reg_b.x;
+    reg_c.y = reg_a.y + reg_b.y;
+    reg_c.z = reg_a.z + reg_b.z;
+    reg_c.w = reg_a.w + reg_b.w;
+
+    // 使用32位内存访问指令一次性存储4个uint8_t元素的结果
+    // 这样可以减少内存访问次数，提高内存带宽利用率
+    UCHAR4(c[idx]) = reg_c;
+}
+
+/**
+ * @brief 8位无符号整数向量化逐元素加法CUDA核函数（使用SIMD指令优化版本）
+ * 使用CUDA内置的__vadd4函数执行4个uint8_t元素的并行加法运算，
+ * 在单个指令周期内完成4个8位整数的加法运算。
+ * 
+ * @param a 输入数组A的指针（uint8_t精度）
+ * @param b 输入数组B的指针（uint8_t精度）
+ * @param c 输出数组C的指针，存储结果（uint8_t精度）
+ * @param N 数组元素总数
+ */
+__global__ void elementwise_add_u8x4v_kernel(uint8_t *a, uint8_t *b, uint8_t *c, const int N)
+{
+    // 计算当前线程处理的起始索引，每个线程处理4个连续的uint8_t元素
+    int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
+
+    if (idx >= N)
+        return;
+    
+    // 使用UINT宏将4个连续的uint8_t元素重新解释为一个32位无符号整数
+    // 这样可以利用32位内存访问指令，减少内存访问次数
+    uint32_t a4 = UINT(a[idx]);
+    uint32_t b4 = UINT(b[idx]);
+    
+    // 使用CUDA内置的__vadd4函数执行4个8位整数的并行加法运算
+    // __vadd4将两个32位整数视为4个8位整数的打包形式，并行执行加法
+    // 这是一个SIMD指令，可以在单个时钟周期内完成4个加法运算
+    uint32_t c4 = __vadd4(a4, b4);
+    
+    // 将计算结果写回到输出数组，同样使用32位内存访问指令
+    // 提高内存带宽利用率和存储效率
+    UINT(c[idx]) = c4;
+}
+
+
+/**
+ * @brief 优化的向量化逐元素加法操作（uint8_t精度，打包版本）
+ * 使用128位内存访问一次处理16个uint8_t元素，通过打包数组和SIMD指令提高性能
+ * 每个线程处理16个连续的uint8_t元素，充分利用内存带宽和SIMD并行计算能力
+ * 
+ * @param a 输入数组A的指针（uint8_t精度）
+ * @param b 输入数组B的指针（uint8_t精度）
+ * @param c 输出数组C的指针，存储结果（uint8_t精度）
+ * @param N 数组元素总数
+ */
+__global__ void elementwise_add_u8x16_pack_kernel(uint8_t *a, uint8_t *b, uint8_t *c, const int N)
+{
+    // 计算当前线程处理的起始索引，每个线程处理16个连续的uint8_t元素
+    int idx = 16 * (blockIdx.x * blockDim.x + threadIdx.x);
+
+    // 声明临时寄存器数组，存储在.local内存空间中，可寻址
+    // 每个数组包含16个uint8_t元素，总共16x8位=128位
+    uint8_t pack_a[16], pack_b[16], pack_c[16]; 
+
+    // 使用128位内存访问指令一次性加载16个uint8_t元素
+    // LDST128BITS宏将连续的16个uint8_t元素重新解释为128位数据进行加载
+    // 这样可以减少内存访问次数，提高内存带宽利用率
+    LDST128BITS(pack_a[0]) = LDST128BITS(a[idx]); 
+    LDST128BITS(pack_b[0]) = LDST128BITS(b[idx]); 
+
+    // 使用编译器指令展开循环，减少循环开销
+    // 每次迭代使用__vadd4处理4个uint8_t元素，总共4次迭代处理16个元素
+#pragma unroll
+    for (int i = 0; i < 16; i += 4)
+    {
+        // 使用CUDA内置的__vadd4函数执行4个uint8_t元素的并行加法运算
+        // 将4个连续的uint8_t重新解释为一个32位整数进行SIMD运算
+        UINT(pack_c[i]) = __vadd4(UINT(pack_a[i]), UINT(pack_b[i]));
+    }
+
+    // 边界检查和结果写回
+    // 如果当前线程处理的所有16个元素都在有效范围内
+    if ((idx + 15) < N)
+    {
+        // 使用128位内存访问指令一次性存储16个uint8_t元素的结果
+        // 这样可以减少内存访问次数，提高内存带宽利用率
+        LDST128BITS(c[idx]) = LDST128BITS(pack_c[0]);
+    }
+    else
+    {
+        // 如果部分元素超出边界，则逐个处理剩余的有效元素
+        // 使用标量加法运算确保不会越界访问内存
+        for (int i = 0; idx + i < N; i++)
+        {
+            c[idx + i] = a[idx + i] + b[idx + i];
         }
     }
 }
@@ -277,6 +420,10 @@ TORCH_BINDING_ELEM_ADD(f16, torch::kHalf, half, 1)
 TORCH_BINDING_ELEM_ADD(f16x2, torch::kHalf, half, 2)
 TORCH_BINDING_ELEM_ADD(f16x8, torch::kHalf, half, 8)
 TORCH_BINDING_ELEM_ADD(f16x8_pack, torch::kHalf, half, 8)
+TORCH_BINDING_ELEM_ADD(u8, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_ELEM_ADD(u8x4, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_ELEM_ADD(u8x4v, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_ELEM_ADD(u8x16_pack, torch::kUInt8, uint8_t, 16)
 
 /**
  * Python绑定模块定义
@@ -291,4 +438,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(elementwise_add_f16x2)
     TORCH_BINDING_COMMON_EXTENSION(elementwise_add_f16x8)
     TORCH_BINDING_COMMON_EXTENSION(elementwise_add_f16x8_pack)
+    TORCH_BINDING_COMMON_EXTENSION(elementwise_add_u8)
+    TORCH_BINDING_COMMON_EXTENSION(elementwise_add_u8x4)
+    TORCH_BINDING_COMMON_EXTENSION(elementwise_add_u8x4v)
+    TORCH_BINDING_COMMON_EXTENSION(elementwise_add_u8x16_pack)
 }
