@@ -316,75 +316,67 @@ __global__ void elementwise_add_u8x4v_kernel(uint8_t *a, uint8_t *b, uint8_t *c,
 
     if (idx >= N)
         return;
-    
+
     // 使用UINT宏将4个连续的uint8_t元素重新解释为一个32位无符号整数
     // 这样可以利用32位内存访问指令，减少内存访问次数
     uint32_t a4 = UINT(a[idx]);
     uint32_t b4 = UINT(b[idx]);
-    
+
     // 使用CUDA内置的__vadd4函数执行4个8位整数的并行加法运算
     // __vadd4将两个32位整数视为4个8位整数的打包形式，并行执行加法
     // 这是一个SIMD指令，可以在单个时钟周期内完成4个加法运算
     uint32_t c4 = __vadd4(a4, b4);
-    
+
     // 将计算结果写回到输出数组，同样使用32位内存访问指令
     // 提高内存带宽利用率和存储效率
     UINT(c[idx]) = c4;
 }
 
-
 /**
- * @brief 优化的向量化逐元素加法操作（uint8_t精度，打包版本）
- * 使用128位内存访问一次处理16个uint8_t元素，通过打包数组和SIMD指令提高性能
- * 每个线程处理16个连续的uint8_t元素，充分利用内存带宽和SIMD并行计算能力
+ * @brief 8位无符号整数向量化逐元素加法CUDA核函数（使用uint4打包优化版本）
+ * 每个线程处理16个连续的uint8_t元素，通过uint4向量化操作和SIMD指令提高内存访问效率和计算吞吐量。
+ * 使用128位内存访问指令和__vadd4 SIMD指令实现最优性能。
  * 
- * @param a 输入数组A的指针（uint8_t精度）
- * @param b 输入数组B的指针（uint8_t精度）
- * @param c 输出数组C的指针，存储结果（uint8_t精度）
+ * @param a 输入数组A的指针（uint8_t精度），使用__restrict__关键字优化内存访问
+ * @param b 输入数组B的指针（uint8_t精度），使用__restrict__关键字优化内存访问
+ * @param c 输出数组C的指针，存储结果（uint8_t精度），使用__restrict__关键字优化内存访问
  * @param N 数组元素总数
  */
-__global__ void elementwise_add_u8x16_pack_kernel(uint8_t *a, uint8_t *b, uint8_t *c, const int N)
+__global__ void elementwise_add_u8x16_pack_kernel(uint8_t *__restrict__ a, uint8_t *__restrict__ b,
+                                                  uint8_t *__restrict__ c, const int N)
 {
     // 计算当前线程处理的起始索引，每个线程处理16个连续的uint8_t元素
-    int idx = 16 * (blockIdx.x * blockDim.x + threadIdx.x);
+    // uint4_idx是当前线程在uint4数组中的索引位置
+    int uint4_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    // idx是当前线程在原始uint8_t数组中的起始索引位置
+    int idx = 16 * uint4_idx;
 
-    // 声明临时寄存器数组，存储在.local内存空间中，可寻址
-    // 每个数组包含16个uint8_t元素，总共16x8位=128位
-    uint8_t pack_a[16], pack_b[16], pack_c[16]; 
+    if (idx >= N)
+        return;
+
+    // 将uint8_t指针重新解释为uint4指针，实现128位向量化内存访问
+    // uint4包含4个uint32_t分量，总共16个uint8_t元素
+    const uint4 *a4 = reinterpret_cast<const uint4 *>(a);
+    const uint4 *b4 = reinterpret_cast<const uint4 *>(b);
+    uint4       *c4 = reinterpret_cast<uint4 *>(c);
 
     // 使用128位内存访问指令一次性加载16个uint8_t元素
-    // LDST128BITS宏将连续的16个uint8_t元素重新解释为128位数据进行加载
-    // 这样可以减少内存访问次数，提高内存带宽利用率
-    LDST128BITS(pack_a[0]) = LDST128BITS(a[idx]); 
-    LDST128BITS(pack_b[0]) = LDST128BITS(b[idx]); 
+    // 每个uint4向量包含4个uint32_t分量，每个分量包含4个uint8_t元素
+    uint4 va = a4[uint4_idx];
+    uint4 vb = b4[uint4_idx];
+    uint4 vc;
 
-    // 使用编译器指令展开循环，减少循环开销
-    // 每次迭代使用__vadd4处理4个uint8_t元素，总共4次迭代处理16个元素
-#pragma unroll
-    for (int i = 0; i < 16; i += 4)
-    {
-        // 使用CUDA内置的__vadd4函数执行4个uint8_t元素的并行加法运算
-        // 将4个连续的uint8_t重新解释为一个32位整数进行SIMD运算
-        UINT(pack_c[i]) = __vadd4(UINT(pack_a[i]), UINT(pack_b[i]));
-    }
+    // 使用CUDA内置的__vadd4函数对每个uint32_t分量执行4个8位整数的并行加法运算
+    // __vadd4将一个32位整数视为4个8位整数的打包形式，并行执行加法
+    // 这是SIMD指令，可以在单个时钟周期内完成4个加法运算
+    vc.x = __vadd4(va.x, vb.x);
+    vc.y = __vadd4(va.y, vb.y);
+    vc.z = __vadd4(va.z, vb.z);
+    vc.w = __vadd4(va.w, vb.w);
 
-    // 边界检查和结果写回
-    // 如果当前线程处理的所有16个元素都在有效范围内
-    if ((idx + 15) < N)
-    {
-        // 使用128位内存访问指令一次性存储16个uint8_t元素的结果
-        // 这样可以减少内存访问次数，提高内存带宽利用率
-        LDST128BITS(c[idx]) = LDST128BITS(pack_c[0]);
-    }
-    else
-    {
-        // 如果部分元素超出边界，则逐个处理剩余的有效元素
-        // 使用标量加法运算确保不会越界访问内存
-        for (int i = 0; idx + i < N; i++)
-        {
-            c[idx + i] = a[idx + i] + b[idx + i];
-        }
-    }
+    // 使用128位内存访问指令一次性写回16个uint8_t元素的计算结果
+    // 这样可以最大化内存带宽利用率和存储效率
+    c4[uint4_idx] = vc;
 }
 
 /**

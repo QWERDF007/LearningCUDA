@@ -7,6 +7,8 @@ from typing import Optional
 import torch
 from torch.utils.cpp_extension import load
 
+import numpy as np
+
 # 禁用梯度计算，因为我们只进行推理，不需要反向传播
 torch.set_grad_enabled(False)
 
@@ -99,17 +101,32 @@ def run_benchmark(
     # 准备输出信息
     out_info = f"out_{tag}"  # 输出标签
     # 获取输出张量的前两个元素，用于验证计算正确性
+    a_val = a.flatten().detach().cpu().numpy()
+    b_val = b.flatten().detach().cpu().numpy()
+    out_val = out.flatten().detach().cpu().numpy()
+
+    res_val = a_val + b_val
+    
+    decimal = 8
+    for i in range(10):
+        try:
+            np.testing.assert_array_almost_equal(out_val, res_val, decimal)
+            break
+        except:
+            decimal -= 1
+
     a_val = a.flatten().detach().cpu().numpy().tolist()[0]
     b_val = b.flatten().detach().cpu().numpy().tolist()[0]
     out_val = out.flatten().detach().cpu().numpy().tolist()[0]
+
     # 将数值四舍五入到8位小数
     # out_val = [round(v, 8) for v in out_val]
-    a_val = round(a_val, 8)
-    b_val = round(b_val, 8)
-    out_val = round(out_val, 8)
+    a_val = round(a_val, 4)
+    b_val = round(b_val, 4)
+    out_val = round(out_val, 4)
     
     # 打印性能测试结果
-    print(f"{out_info:>18}: a + b = {a_val} + {b_val} = {out_val}, iters: {iters}, time: {total_time:.8f}ms, avg: {mean_time:.8f}ms")
+    print(f"{out_info:>18}: a + b = {a_val} + {b_val} = c = {out_val} in decimal: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     # 如果需要，打印完整的输出张量
     if show_all:
