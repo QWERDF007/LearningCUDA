@@ -35,3 +35,9 @@
  * 
  */
 #define CHECK_TORCH_TENSOR_DEVICE(T) TORCH_CHECK((T).device().is_cuda(), "Tensor " #T " must be on CUDA device");
+
+
+inline static int divUp(int a, int b)
+{
+    return (a + b - 1) / b;
+}

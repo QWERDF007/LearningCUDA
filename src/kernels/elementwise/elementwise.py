@@ -138,7 +138,7 @@ def run_benchmark(
 # 定义测试用的张量高度列表
 Hs = [1024, 2048, 4096]
 # 定义测试用的张量宽度列表  
-Ws = [1024, 2048, 4096]
+Ws = [1024, 2048, 4096, 46000]
 # 生成所有可能的(高度, 宽度)组合
 Sizes = [(H, W) for H in Hs for W in Ws]
 
@@ -160,6 +160,9 @@ for H, W in Sizes:
     run_benchmark(partial(torch.add, out=c_u8), a_u8, b_u8, "u8_torch")
 
     print("-" * 85)
+
+    if W > 4096:
+        continue
     
     # 创建测试用的随机张量
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()

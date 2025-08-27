@@ -110,7 +110,7 @@ def run_benchmark(
 # 定义测试用的张量高度列表
 Hs = [1024, 2048, 4096]
 # 定义测试用的张量宽度列表  
-Ws = [1024, 2048, 4096]
+Ws = [1024, 2048, 4096, 46000]
 # 生成所有可能的(高度, 宽度)组合
 Sizes = [(H, W) for H in Hs for W in Ws]
 
@@ -132,12 +132,17 @@ for H, W in Sizes:
 
     print("-" * 85)
 
+    if W > 4096:
+        continue
+
     # 创建float32类型的测试张量
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     out = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
 
     run_benchmark(lib.threshold_f32, a, 0.5, "f32", out)
     run_benchmark(lib.threshold_f32_2D, a, 0.5, "f32_2D", out)
+    run_benchmark(lib.threshold_f32x4, a, 0.5, "f32x4", out)
+    run_benchmark(lib.threshold_f32x4_2D, a, 0.5, "f32x4_2D", out)
 
     print("-" * 85)
     
