@@ -94,7 +94,7 @@ def run_benchmark(
 # 定义测试用的张量高度列表
 Hs = [1024, 2048, 4096]
 # 定义测试用的张量宽度列表  
-Ws = [1024, 2048, 4096]
+Ws = [1024, 2048, 4096, 46000]
 # 生成所有可能的(高度, 宽度)组合
 Sizes = [(H, W) for H in Hs for W in Ws]
 
@@ -114,6 +114,8 @@ for H, W in Sizes:
     run_benchmark(lib.histogram_u8x4, a, bins, "u8x4")
     run_benchmark(lib.histogram_u8_2D, a, bins, "u8_2D")
     run_benchmark(lib.histogram_u8x4_2D, a, bins, "u8x4_2D")
+    run_benchmark(lib.histogram_u8x4_shared, a, bins, "u8x4_shared")
+    run_benchmark(lib.histogram_u8x4_warp, a, bins, "u8x4_warp")
 
     print("-" * 85)
 

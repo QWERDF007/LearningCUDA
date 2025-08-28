@@ -9,6 +9,8 @@
 - [x] histogram_u8x4_2D (2D布局, 向量化版本)
 - [x] histogram_i32 (int32版本)
 - [x] histogram_i32x4 (int32向量化版本)
+- [x] histogram_u8x4_shared (u8共享内存版本)
+- [x] histogram_u8x4_warp_kernel (u8共享内存, warp级别优化版本)
 
 ## 测试
 
@@ -30,100 +32,186 @@ python3 histogram.py
 ```
 -------------------------------------------------------------------------------------
                                         H=1024, W=1024
-            out_u8: (True), iters: 1000, time: 251.7166ms, avg: 0.2517ms
-          out_u8x4: (True), iters: 1000, time: 251.5666ms, avg: 0.2516ms
-         out_u8_2D: (True), iters: 1000, time: 251.7147ms, avg: 0.2517ms
-       out_u8x4_2D: (True), iters: 1000, time: 251.6272ms, avg: 0.2516ms
+            out_u8: (True), iters: 1000, time: 251.7459ms, avg: 0.2517ms
+          out_u8x4: (True), iters: 1000, time: 252.3687ms, avg: 0.2524ms
+         out_u8_2D: (True), iters: 1000, time: 252.1615ms, avg: 0.2522ms
+       out_u8x4_2D: (True), iters: 1000, time: 252.2290ms, avg: 0.2522ms
+   out_u8x4_shared: (True), iters: 1000, time: 21.0204ms, avg: 0.0210ms
+     out_u8x4_warp: (True), iters: 1000, time: 7.7043ms, avg: 0.0077ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 111.6989ms, avg: 0.1117ms
-         out_i32x4: (True), iters: 1000, time: 111.7799ms, avg: 0.1118ms
+           out_i32: (True), iters: 1000, time: 112.2568ms, avg: 0.1123ms
+         out_i32x4: (True), iters: 1000, time: 112.2448ms, avg: 0.1122ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=1024, W=2048
-            out_u8: (True), iters: 1000, time: 479.2259ms, avg: 0.4792ms
-          out_u8x4: (True), iters: 1000, time: 479.6572ms, avg: 0.4797ms
-         out_u8_2D: (True), iters: 1000, time: 479.8052ms, avg: 0.4798ms
-       out_u8x4_2D: (True), iters: 1000, time: 479.6662ms, avg: 0.4797ms
+            out_u8: (True), iters: 1000, time: 482.3430ms, avg: 0.4823ms
+          out_u8x4: (True), iters: 1000, time: 481.5316ms, avg: 0.4815ms
+         out_u8_2D: (True), iters: 1000, time: 481.6840ms, avg: 0.4817ms
+       out_u8x4_2D: (True), iters: 1000, time: 481.7896ms, avg: 0.4818ms
+   out_u8x4_shared: (True), iters: 1000, time: 39.2406ms, avg: 0.0392ms
+     out_u8x4_warp: (True), iters: 1000, time: 7.9205ms, avg: 0.0079ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 194.4594ms, avg: 0.1945ms
-         out_i32x4: (True), iters: 1000, time: 194.4201ms, avg: 0.1944ms
+           out_i32: (True), iters: 1000, time: 194.9549ms, avg: 0.1950ms
+         out_i32x4: (True), iters: 1000, time: 194.6664ms, avg: 0.1947ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=1024, W=4096
-            out_u8: (True), iters: 1000, time: 932.9247ms, avg: 0.9329ms
-          out_u8x4: (True), iters: 1000, time: 932.5027ms, avg: 0.9325ms
-         out_u8_2D: (True), iters: 1000, time: 932.8663ms, avg: 0.9329ms
-       out_u8x4_2D: (True), iters: 1000, time: 932.5094ms, avg: 0.9325ms
+            out_u8: (True), iters: 1000, time: 934.1159ms, avg: 0.9341ms
+          out_u8x4: (True), iters: 1000, time: 935.4813ms, avg: 0.9355ms
+         out_u8_2D: (True), iters: 1000, time: 938.8375ms, avg: 0.9388ms
+       out_u8x4_2D: (True), iters: 1000, time: 934.8278ms, avg: 0.9348ms
+   out_u8x4_shared: (True), iters: 1000, time: 75.8202ms, avg: 0.0758ms
+     out_u8x4_warp: (True), iters: 1000, time: 8.4500ms, avg: 0.0085ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 366.7049ms, avg: 0.3667ms
-         out_i32x4: (True), iters: 1000, time: 366.5094ms, avg: 0.3665ms
+           out_i32: (True), iters: 1000, time: 367.3956ms, avg: 0.3674ms
+         out_i32x4: (True), iters: 1000, time: 367.2326ms, avg: 0.3672ms
+-------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------
+                                        H=1024, W=46000
+            out_u8: (True), iters: 1000, time: 10285.4767ms, avg: 10.2855ms
+          out_u8x4: (True), iters: 1000, time: 10285.2683ms, avg: 10.2853ms
+         out_u8_2D: (True), iters: 1000, time: 10295.3706ms, avg: 10.2954ms
+       out_u8x4_2D: (True), iters: 1000, time: 10290.7665ms, avg: 10.2908ms
+   out_u8x4_shared: (True), iters: 1000, time: 823.9076ms, avg: 0.8239ms
+     out_u8x4_warp: (True), iters: 1000, time: 23.6952ms, avg: 0.0237ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=2048, W=1024
-            out_u8: (True), iters: 1000, time: 477.4022ms, avg: 0.4774ms
-          out_u8x4: (True), iters: 1000, time: 478.0033ms, avg: 0.4780ms
-         out_u8_2D: (True), iters: 1000, time: 479.3060ms, avg: 0.4793ms
-       out_u8x4_2D: (True), iters: 1000, time: 478.5774ms, avg: 0.4786ms
+            out_u8: (True), iters: 1000, time: 482.3694ms, avg: 0.4824ms
+          out_u8x4: (True), iters: 1000, time: 482.5168ms, avg: 0.4825ms
+         out_u8_2D: (True), iters: 1000, time: 482.5037ms, avg: 0.4825ms
+       out_u8x4_2D: (True), iters: 1000, time: 482.4185ms, avg: 0.4824ms
+   out_u8x4_shared: (True), iters: 1000, time: 39.2413ms, avg: 0.0392ms
+     out_u8x4_warp: (True), iters: 1000, time: 7.9212ms, avg: 0.0079ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 194.2248ms, avg: 0.1942ms
-         out_i32x4: (True), iters: 1000, time: 194.2983ms, avg: 0.1943ms
+           out_i32: (True), iters: 1000, time: 195.4703ms, avg: 0.1955ms
+         out_i32x4: (True), iters: 1000, time: 194.9666ms, avg: 0.1950ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=2048, W=2048
-            out_u8: (True), iters: 1000, time: 932.6060ms, avg: 0.9326ms
-          out_u8x4: (True), iters: 1000, time: 932.5294ms, avg: 0.9325ms
-         out_u8_2D: (True), iters: 1000, time: 932.4751ms, avg: 0.9325ms
-       out_u8x4_2D: (True), iters: 1000, time: 932.7078ms, avg: 0.9327ms
+            out_u8: (True), iters: 1000, time: 935.1127ms, avg: 0.9351ms
+          out_u8x4: (True), iters: 1000, time: 937.2568ms, avg: 0.9373ms
+         out_u8_2D: (True), iters: 1000, time: 938.9379ms, avg: 0.9389ms
+       out_u8x4_2D: (True), iters: 1000, time: 936.9683ms, avg: 0.9370ms
+   out_u8x4_shared: (True), iters: 1000, time: 75.8214ms, avg: 0.0758ms
+     out_u8x4_warp: (True), iters: 1000, time: 8.5549ms, avg: 0.0086ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 366.8439ms, avg: 0.3668ms
-         out_i32x4: (True), iters: 1000, time: 367.1737ms, avg: 0.3672ms
+           out_i32: (True), iters: 1000, time: 367.9097ms, avg: 0.3679ms
+         out_i32x4: (True), iters: 1000, time: 367.7239ms, avg: 0.3677ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=2048, W=4096
-            out_u8: (True), iters: 1000, time: 1839.5350ms, avg: 1.8395ms
-          out_u8x4: (True), iters: 1000, time: 1837.5695ms, avg: 1.8376ms
-         out_u8_2D: (True), iters: 1000, time: 1843.4885ms, avg: 1.8435ms
-       out_u8x4_2D: (True), iters: 1000, time: 1836.6652ms, avg: 1.8367ms
+            out_u8: (True), iters: 1000, time: 1852.9510ms, avg: 1.8530ms
+          out_u8x4: (True), iters: 1000, time: 1852.4122ms, avg: 1.8524ms
+         out_u8_2D: (True), iters: 1000, time: 1853.0617ms, avg: 1.8531ms
+       out_u8x4_2D: (True), iters: 1000, time: 1853.4400ms, avg: 1.8534ms
+   out_u8x4_shared: (True), iters: 1000, time: 148.9716ms, avg: 0.1490ms
+     out_u8x4_warp: (True), iters: 1000, time: 9.4459ms, avg: 0.0094ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 707.0212ms, avg: 0.7070ms
-         out_i32x4: (True), iters: 1000, time: 705.1198ms, avg: 0.7051ms
+           out_i32: (True), iters: 1000, time: 712.5437ms, avg: 0.7125ms
+         out_i32x4: (True), iters: 1000, time: 712.7686ms, avg: 0.7128ms
+-------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------
+                                        H=2048, W=46000
+            out_u8: (True), iters: 1000, time: 20587.6322ms, avg: 20.5876ms
+          out_u8x4: (True), iters: 1000, time: 20591.1345ms, avg: 20.5911ms
+         out_u8_2D: (True), iters: 1000, time: 20619.4696ms, avg: 20.6195ms
+       out_u8x4_2D: (True), iters: 1000, time: 20601.0897ms, avg: 20.6011ms
+   out_u8x4_shared: (True), iters: 1000, time: 1645.6132ms, avg: 1.6456ms
+     out_u8x4_warp: (True), iters: 1000, time: 106.8521ms, avg: 0.1069ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=4096, W=1024
-            out_u8: (True), iters: 1000, time: 931.5786ms, avg: 0.9316ms
-          out_u8x4: (True), iters: 1000, time: 931.7653ms, avg: 0.9318ms
-         out_u8_2D: (True), iters: 1000, time: 931.9568ms, avg: 0.9320ms
-       out_u8x4_2D: (True), iters: 1000, time: 931.8135ms, avg: 0.9318ms
+            out_u8: (True), iters: 1000, time: 934.0849ms, avg: 0.9341ms
+          out_u8x4: (True), iters: 1000, time: 934.7026ms, avg: 0.9347ms
+         out_u8_2D: (True), iters: 1000, time: 940.0079ms, avg: 0.9400ms
+       out_u8x4_2D: (True), iters: 1000, time: 935.0033ms, avg: 0.9350ms
+   out_u8x4_shared: (True), iters: 1000, time: 75.8195ms, avg: 0.0758ms
+     out_u8x4_warp: (True), iters: 1000, time: 8.4393ms, avg: 0.0084ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 366.2448ms, avg: 0.3662ms
-         out_i32x4: (True), iters: 1000, time: 366.5240ms, avg: 0.3665ms
+           out_i32: (True), iters: 1000, time: 367.1787ms, avg: 0.3672ms
+         out_i32x4: (True), iters: 1000, time: 367.0397ms, avg: 0.3670ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=4096, W=2048
-            out_u8: (True), iters: 1000, time: 1836.2880ms, avg: 1.8363ms
-          out_u8x4: (True), iters: 1000, time: 1833.4966ms, avg: 1.8335ms
-         out_u8_2D: (True), iters: 1000, time: 1841.6355ms, avg: 1.8416ms
-       out_u8x4_2D: (True), iters: 1000, time: 1833.7820ms, avg: 1.8338ms
+            out_u8: (True), iters: 1000, time: 1851.4061ms, avg: 1.8514ms
+          out_u8x4: (True), iters: 1000, time: 1851.4638ms, avg: 1.8515ms
+         out_u8_2D: (True), iters: 1000, time: 1851.2979ms, avg: 1.8513ms
+       out_u8x4_2D: (True), iters: 1000, time: 1852.7024ms, avg: 1.8527ms
+   out_u8x4_shared: (True), iters: 1000, time: 148.9782ms, avg: 0.1490ms
+     out_u8x4_warp: (True), iters: 1000, time: 9.4397ms, avg: 0.0094ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 706.7959ms, avg: 0.7068ms
-         out_i32x4: (True), iters: 1000, time: 705.8854ms, avg: 0.7059ms
+           out_i32: (True), iters: 1000, time: 712.9543ms, avg: 0.7130ms
+         out_i32x4: (True), iters: 1000, time: 711.4413ms, avg: 0.7114ms
 -------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------
                                         H=4096, W=4096
-            out_u8: (True), iters: 1000, time: 3653.0051ms, avg: 3.6530ms
-          out_u8x4: (True), iters: 1000, time: 3652.9882ms, avg: 3.6530ms
-         out_u8_2D: (True), iters: 1000, time: 3653.3151ms, avg: 3.6533ms
-       out_u8x4_2D: (True), iters: 1000, time: 3652.9117ms, avg: 3.6529ms
+            out_u8: (True), iters: 1000, time: 3678.5176ms, avg: 3.6785ms
+          out_u8x4: (True), iters: 1000, time: 3678.1874ms, avg: 3.6782ms
+         out_u8_2D: (True), iters: 1000, time: 3679.0915ms, avg: 3.6791ms
+       out_u8x4_2D: (True), iters: 1000, time: 3679.3456ms, avg: 3.6793ms
+   out_u8x4_shared: (True), iters: 1000, time: 295.1880ms, avg: 0.2952ms
+     out_u8x4_warp: (True), iters: 1000, time: 11.4751ms, avg: 0.0115ms
 -------------------------------------------------------------------------------------
-           out_i32: (True), iters: 1000, time: 1391.6135ms, avg: 1.3916ms
-         out_i32x4: (True), iters: 1000, time: 1391.0754ms, avg: 1.3911ms
+           out_i32: (True), iters: 1000, time: 1399.9193ms, avg: 1.3999ms
+         out_i32x4: (True), iters: 1000, time: 1399.7352ms, avg: 1.3997ms
+-------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------
+                                        H=4096, W=46000
+            out_u8: (True), iters: 1000, time: 41171.1254ms, avg: 41.1711ms
+          out_u8x4: (True), iters: 1000, time: 41178.7279ms, avg: 41.1787ms
+         out_u8_2D: (True), iters: 1000, time: 41235.8508ms, avg: 41.2359ms
+       out_u8x4_2D: (True), iters: 1000, time: 41202.0557ms, avg: 41.2021ms
+   out_u8x4_shared: (True), iters: 1000, time: 3288.2931ms, avg: 3.2883ms
+     out_u8x4_warp: (True), iters: 1000, time: 207.7422ms, avg: 0.2077ms
 -------------------------------------------------------------------------------------
 ```
 
 ## FAQ
 
-为什么向量化没有加速？
+### 为什么向量化没有加速？
 
 关键问题：
-- 向量化版本虽然减少了内存访问次数（从4次变1次），但增加了原子操作次数（从1次变4次）
+- 向量化版本虽然减少了内存访问次数（从 4 次变 1 次），但增加了原子操作次数（从 1 次变 4 次）
 - 原子操作比内存访问更昂贵，特别是当多个线程竞争同一个内存位置时
+
+### 为什么共享内存有加速？
+
+1. 延迟差异（降低 20-40倍）
+   - 全局内存原子操作：~400-800 个时钟周期
+   - 共享内存原子操作：~20-30 个时钟周期
+2. 竞争减少
+   - 基础版本：所有线程块（可能数万个）都竞争同一个全局内存位置
+   - 共享内存版本：线程块内部先在共享内存中累积，减少全局竞争
+
+### 为什么warp级别优化比基础版快上百倍？
+
+1. 原子操作竞争极大减少（竞争减少数百倍）
+   - 基础版本：所有线程（可能数万个）竞争 256 个全局内存位置
+   - Warp版本：每 32 个线程竞争 256 个共享内存位置
+2. 内存层次优化
+   - 基础版本：直接访问全局内存
+   - Warp版本：每 32 个线程竞争 256 个共享内存位置
+3. 合并访问模式
+   - 向量化读取：`reinterpret_cast<const uchar4 *>(in)[idx4]`
+   - 连续内存访问，充分利用内存带宽
+
+**关键**
+
+直方图计算的性能瓶颈不是计算，而是原子操作的竞争。Warp级别优化通过将竞争从"数万线程竞争 256 个位置"优化为"32 线程竞争 256 个位置"，实现了质的飞跃。
+
+**缺点**
+
+1. 内存消耗增加16倍
+
+```C++
+// 共享内存版本
+__shared__ int local_hist[256];  // 256 × 4 bytes = 1KB
+
+// Warp级别版本 (THREADS=512)
+constexpr int WARPS_PER_BLOCK = 512 / 32 = 16;
+__shared__ int s_hist[16 * 256];  // 16 × 256 × 4 bytes = 16KB
+```
+
+2. 代码复杂度提升
+3. 扩展性差，只适用于bin数量固定且较小的情况
