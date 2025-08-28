@@ -2,6 +2,10 @@
 
 #include <torch/extension.h>
 
+#define BLOCK_SIZE_X 32
+#define BLOCK_SIZE_Y 16
+#define THREADS      512
+
 /**
  * 字符串化宏：将参数转换为字符串字面量
  * 用于在编译时将函数名或变量名转换为对应的字符串
@@ -35,7 +39,6 @@
  * 
  */
 #define CHECK_TORCH_TENSOR_DEVICE(T) TORCH_CHECK((T).device().is_cuda(), "Tensor " #T " must be on CUDA device");
-
 
 inline static int divUp(int a, int b)
 {

@@ -8,8 +8,6 @@
 
 #include <iostream>
 
-#define THREADS 512
-
 #define UCHAR4(value)      (reinterpret_cast<uchar4 *>(&(value))[0])
 #define FLOAT4(value)      (reinterpret_cast<float4 *>(&(value))[0])
 #define HALF2(value)       (reinterpret_cast<half2 *>(&(value))[0])

@@ -2,10 +2,6 @@
 
 #include <cuda_runtime.h>
 
-#define BLOCK_SIZE_X 32
-#define BLOCK_SIZE_Y 16
-#define THREADS      512
-
 /**
  * @brief 基础的uint8_t阈值化核函数
  * 
@@ -243,7 +239,7 @@ __global__ void threshold_f32x4_kernel2D(float *in, const float th, float *out, 
         const int H = in.size(0);                                                                                    \
         const int W = in.size(1);                                                                                    \
         dim3      block(BLOCK_SIZE_X, BLOCK_SIZE_Y);                                                                 \
-        /* 由于每个线程处理n_elements个像素，所以网格的x维度需要除以n_elements */             \
+        /* 由于每个线程处理n_elements个像素，所以网格的x维度需要除以n_elements */                                    \
         dim3      grid(divUp(W, block.x *n_elements), divUp(H, block.y));                                            \
         threshold_##packed_type##_kernel2D<<<grid, block>>>(reinterpret_cast<element_type *>(in.data_ptr()), th,     \
                                                             reinterpret_cast<element_type *>(out.data_ptr()), W, H); \
