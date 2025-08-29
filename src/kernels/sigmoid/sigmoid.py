@@ -79,11 +79,12 @@ def run_benchmark(
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
 
-    expected = torch.sigmoid(a)  
+    expected = torch.sigmoid(a).cpu().numpy()
+    out_np = out.cpu().numpy()
     decimal = 8
     for i in range(10):
         try:
-            np.testing.assert_array_almost_equal(out.cpu().numpy(), expected.cpu().numpy(), decimal)
+            np.testing.assert_array_almost_equal(out_np, expected, decimal)
             break
         except:
             decimal -= 1
