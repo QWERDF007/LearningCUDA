@@ -11,7 +11,6 @@
 #define UCHAR4(value)      (reinterpret_cast<uchar4 *>(&(value))[0])
 #define FLOAT4(value)      (reinterpret_cast<float4 *>(&(value))[0])
 #define HALF2(value)       (reinterpret_cast<half2 *>(&(value))[0])
-#define LDST128BITS(value) (reinterpret_cast<float4 *>(&(value))[0])
 #define UINT(value)        (reinterpret_cast<uint32_t *>(&(value))[0])
 
 /**

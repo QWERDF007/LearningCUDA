@@ -73,13 +73,13 @@ __global__ void sigmoid_f16x8_pack_kernel(half *x, half *y, int N)
 
     half pack_x[8], pack_y[8]; // 8x16 bits=128 bits.
 
-    *reinterpret_cast<float4 *>(&pack_x[0]) = *reinterpret_cast<float4 *>(&x[idx]);
+    LDST128BITS(pack_x[0]) = LDST128BITS(x[idx]);
 #pragma unroll
     for (int i = 0; i < 8; ++i)
     {
         pack_y[i] = _sigmoid_f16(pack_x[i]);
     }
-    *reinterpret_cast<float4 *>(&y[idx]) = *reinterpret_cast<float4 *>(&pack_y[0]);
+    LDST128BITS(y[idx]) = LDST128BITS(pack_y[0]);
 }
 
 #define TORCH_BINDING_SIGMOID(packed_type, torch_type, element_type, n_elements)                              \

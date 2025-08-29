@@ -160,7 +160,7 @@ __global__ void histogram_u8x4_kernel_shared(const uint8_t *in, int32_t *out, co
 }
 
 /**
- * @brief 使用共享内存优化的uint8直方图计算（PyTorch接口）
+ * @brief 使用共享内存优化的uint8直方图计算
  * @param in 输入张量
  * @return 输出直方图张量
  */
