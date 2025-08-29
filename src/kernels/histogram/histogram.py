@@ -77,10 +77,25 @@ def run_benchmark(
     mean_time = total_time / iters  # 平均每次迭代的时间
 
     try:
-        np.testing.assert_array_equal(out.cpu().numpy(), np.histogram(a.cpu().numpy(), bins)[0])
+        # 对于torch.histc的结果，需要特殊处理
+        if "torch" in tag:
+            # torch.histc使用的是[min, max)区间，与我们的实现一致
+            if a.dtype == torch.uint8 or (hasattr(a, 'dtype') and a.dtype == torch.float32):
+                # 获取原始uint8数据进行比较
+                original_a = a if a.dtype == torch.uint8 else a.byte()
+                expected = np.histogram(original_a.cpu().numpy(), bins=bins, range=(0, bins))[0]
+            else:
+                expected = np.histogram(a.cpu().numpy(), bins=bins, range=(0, bins))[0]
+            # torch.histc返回float，需要转换为int进行比较
+            np.testing.assert_array_equal(out.cpu().numpy().astype(int), expected)
+        else:
+            # 对于我们自定义的CUDA实现
+            expected = np.histogram(a.cpu().numpy(), bins=bins, range=(0, bins))[0]
+            np.testing.assert_array_equal(out.cpu().numpy(), expected)
         logic = True
-    except:
+    except Exception as e:
         logic = False
+        print(f"Validation failed for {tag}: {e}")
 
     out_info = f"out_{tag}" 
     
@@ -116,6 +131,8 @@ for H, W in Sizes:
     run_benchmark(lib.histogram_u8x4_2D, a, bins, "u8x4_2D")
     run_benchmark(lib.histogram_u8x4_shared, a, bins, "u8x4_shared")
     run_benchmark(lib.histogram_u8x4_warp, a, bins, "u8x4_warp")
+    # 修复torch.histc的调用：需要转换为float类型，并且范围应该是[0, 256)而不是[0, 255]
+    run_benchmark(partial(torch.histc, bins=bins, min=0.0, max=256.0), a.float(), bins, "u8_torch")
 
     print("-" * 85)
 

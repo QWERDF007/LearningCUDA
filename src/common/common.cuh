@@ -6,6 +6,11 @@
 #define BLOCK_SIZE_Y 16
 #define THREADS      512
 
+#define MAX_EXP_F32 88.3762626647949f
+#define MIN_EXP_F32 -88.3762626647949f
+#define MAX_EXP_F16 __float2half(11.089866488461016f)
+#define MIN_EXP_F16 __float2half(-9.704060527839234f)
+
 /**
  * 字符串化宏：将参数转换为字符串字面量
  * 用于在编译时将函数名或变量名转换为对应的字符串
