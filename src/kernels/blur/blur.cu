@@ -47,8 +47,7 @@ __device__ __forceinline__ int reflect_101(int coord, int size)
  */
 __device__ __forceinline__ int reflect_101_no_brnach(int coord, int size)
 {
-    int res = coord;
-    res     = (res < 0) ? -res : res;
+    int res = (coord < 0) ? -coord : coord;
     res     = (res >= size) ? 2 * size - res - 2 : res;
     return res;
 }
@@ -178,6 +177,123 @@ __global__ void blur_u8_kernel_shared(uint8_t *in, uint8_t *out, const int ks_w,
     out[y * img_w + x] = (uint8_t)roundf(sum / count);
 }
 
+// 横向一维滤波
+__global__ void blur_u8_h_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w, int img_h)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= img_w || y >= img_h)
+        return;
+
+    int half_w = ks_w / 2;
+    int sum    = 0;
+
+    for (int kx = -half_w; kx <= half_w; ++kx)
+    {
+        int xx = reflect_101_no_brnach(x + kx, img_w);
+        sum += in[y * img_w + xx];
+    }
+
+    // 存储原始和，不进行除法以避免精度损失
+    tmp[y * img_w + x] = sum;
+}
+
+// 纵向一维滤波
+__global__ void blur_u8_v_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h, int img_w, int img_h)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= img_w || y >= img_h)
+        return;
+
+    int half_h = ks_h / 2;
+    int sum    = 0;
+
+    for (int ky = -half_h; ky <= half_h; ++ky)
+    {
+        int yy = reflect_101_no_brnach(y + ky, img_h);
+        sum += tmp[yy * img_w + x];
+    }
+
+    // 现在计算总平均值：sum是水平和的垂直和，需要除以 ks_w * ks_h
+    out[y * img_w + x] = (uint8_t)roundf((float)sum / (ks_w * ks_h));
+}
+
+// 横向滤波 (shared memory 优化)
+__global__ void blur_u8_h_shared(uint8_t *in, uint8_t *tmp, int ks_w, int img_w, int img_h)
+{
+    extern __shared__ uint8_t sdata[]; // 动态共享内存
+
+    int tx = threadIdx.x;
+    int x  = blockIdx.x * blockDim.x + tx;
+    int y  = blockIdx.y; // 每个block处理一行
+
+    if (y >= img_h)
+        return;
+
+    int half_w = ks_w / 2;
+
+    // 全局索引范围
+    int left  = x - half_w;
+    int right = x + half_w;
+
+    // 将当前 block 覆盖的范围搬到共享内存
+    // 注意：每个线程可能要搬多个像素，确保覆盖完整窗口
+    for (int k = tx; k < blockDim.x + 2 * half_w; k += blockDim.x)
+    {
+        int gx   = blockIdx.x * blockDim.x + k - half_w;
+        gx       = reflect_101_no_brnach(gx, img_w);
+        sdata[k] = in[y * img_w + gx];
+    }
+    __syncthreads();
+
+    // 计算卷积
+    if (x < img_w)
+    {
+        int sum = 0;
+        for (int k = 0; k < ks_w; ++k) sum += sdata[tx + k];
+
+        tmp[y * img_w + x] = (uint8_t)roundf((float)sum / ks_w);
+    }
+}
+
+// 纵向滤波 (shared memory 优化)
+__global__ void blur_u8_v_shared(uint8_t *tmp, uint8_t *out, int ks_h, int img_w, int img_h)
+{
+    extern __shared__ uint8_t sdata[]; // 共享内存存 tile
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int x = blockIdx.x * blockDim.x + tx;
+    int y = blockIdx.y * blockDim.y + ty;
+
+    if (x >= img_w || y >= img_h)
+        return;
+
+    int half_h = ks_h / 2;
+
+    // 每个 block 覆盖的 tile 高度
+    int tile_h = blockDim.y + 2 * half_h;
+
+    // 搬运共享内存
+    for (int k = ty; k < tile_h; k += blockDim.y)
+    {
+        int gy                     = blockIdx.y * blockDim.y + k - half_h;
+        gy                         = reflect_101_no_brnach(gy, img_h);
+        sdata[k * blockDim.x + tx] = tmp[gy * img_w + x];
+    }
+    __syncthreads();
+
+    // 卷积计算
+    int sum = 0;
+    for (int k = 0; k < ks_h; ++k) sum += sdata[(ty + k) * blockDim.x + tx];
+
+    out[y * img_w + x] = (uint8_t)roundf((float)sum / ks_h);
+}
+
 void blur_u8_shared(torch::Tensor in, const int ksz, torch::Tensor out)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -193,6 +309,26 @@ void blur_u8_shared(torch::Tensor in, const int ksz, torch::Tensor out)
     size_t    smem_size = (block.x + 2 * (ksz / 2)) * (block.y + 2 * (ksz / 2)) * sizeof(uint8_t);
     blur_u8_kernel_shared<<<grid, block, smem_size>>>(reinterpret_cast<uint8_t *>(in.data_ptr()),
                                                       reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
+}
+
+void blur_u8_split(torch::Tensor in, const int ksz, torch::Tensor out, torch::Tensor tmp)
+{
+    CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(out, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(tmp, torch::kInt32)
+    CHECK_TORCH_TENSOR_DEVICE(in)
+    CHECK_TORCH_TENSOR_DEVICE(out)
+    CHECK_TORCH_TENSOR_DEVICE(tmp)
+
+    const int H = in.size(0);
+    const int W = in.size(1);
+    const int N = H * W;
+    dim3      block(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3      grid(divUp(W, block.x), divUp(H, block.y));
+    blur_u8_h_kernel<<<grid, block>>>(reinterpret_cast<uint8_t *>(in.data_ptr()),
+                                      reinterpret_cast<int32_t *>(tmp.data_ptr()), ksz, W, H);
+    blur_u8_v_kernel<<<grid, block>>>(reinterpret_cast<int32_t *>(tmp.data_ptr()),
+                                      reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
 #define TORCH_BINDING_BLUR(packed_type, torch_type, element_type, n_elements)                                       \
@@ -222,4 +358,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8_nb)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8_shared)
+    TORCH_BINDING_COMMON_EXTENSION(blur_u8_split)
 }
