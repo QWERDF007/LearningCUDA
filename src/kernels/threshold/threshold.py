@@ -126,6 +126,7 @@ for H, W in Sizes:
     # 运行uint8类型的性能基准测试
     run_benchmark(lib.threshold_u8, a, 128, "u8", out)
     run_benchmark(lib.threshold_u8x4, a, 128, "u8x4", out)
+    run_benchmark(lib.threshold_u8x16_pack, a, 128, "u8x16_pack", out)
     run_benchmark(lib.threshold_u8_2D, a, 128, "u8_2D", out)
     run_benchmark(lib.threshold_u8x4_2D, a, 128, "u8x4_2D", out)
     run_benchmark(lambda x, th: F.threshold(x, th, 0), a, 128, "u8_torch")

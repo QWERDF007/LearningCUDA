@@ -71,6 +71,21 @@ __global__ void threshold_u8x4_kernel(uint8_t *in, const uint8_t th, uint8_t *ou
     *reinterpret_cast<uchar4 *>(&out[idx]) = out4;
 }
 
+__global__ void threshold_u8x16_pack_kernel(uint8_t *in, const uint8_t th, uint8_t *out, const int N)
+{
+    int idx = 16 * (blockIdx.x * blockDim.x + threadIdx.x);
+    if (idx >= N)
+        return;
+    uint8_t pack_x[16], pack_y[16];
+    *reinterpret_cast<uint4 *>(&pack_x[0]) = *reinterpret_cast<uint4 *>(&in[idx]);
+#pragma unroll
+    for (int i = 0; i < 16; ++i)
+    {
+        pack_y[i] = pack_x[i] > th ? 255 : 0;
+    }
+    *reinterpret_cast<uint4 *>(&out[idx]) = *reinterpret_cast<uint4 *>(&pack_y[0]);
+}
+
 /**
  * @brief 2D布局的向量化uint8_t阈值化核函数
  * 
@@ -264,6 +279,7 @@ __global__ void threshold_f32x4_kernel2D(float *in, const float th, float *out, 
 
 TORCH_BINDING_THRESHOLD(u8, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_THRESHOLD(u8x4, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_THRESHOLD(u8x16_pack, torch::kUInt8, uint8_t, 16)
 TORCH_BINDING_THRESHOLD(f32, torch::kFloat32, float, 1)
 TORCH_BINDING_THRESHOLD(f32x4, torch::kFloat32, float, 4)
 TORCH_BINDING_THRESHOLD_2D(u8, torch::kUInt8, uint8_t, 1)
@@ -275,6 +291,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(threshold_u8)
     TORCH_BINDING_COMMON_EXTENSION(threshold_u8x4)
+    TORCH_BINDING_COMMON_EXTENSION(threshold_u8x16_pack)
     TORCH_BINDING_COMMON_EXTENSION(threshold_f32)
     TORCH_BINDING_COMMON_EXTENSION(threshold_f32x4)
     TORCH_BINDING_COMMON_EXTENSION(threshold_u8_2D)

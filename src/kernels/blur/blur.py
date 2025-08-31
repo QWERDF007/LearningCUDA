@@ -122,6 +122,8 @@ for H, W, ksz in Sizes:
 
     
     run_benchmark(lib.blur_u8, a, ksz, "u8", out)
+    run_benchmark(lib.blur_u8_nb, a, ksz, "u8_no_branch", out)
+    run_benchmark(lib.blur_u8_shared, a, ksz, "u8_shared", out)
     run_benchmark(cv2.blur, a_np, ksz, "u8_cv", None)
 
     print("-" * 85)

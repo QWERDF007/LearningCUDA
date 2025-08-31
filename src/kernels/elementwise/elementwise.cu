@@ -8,10 +8,10 @@
 
 #include <iostream>
 
-#define UCHAR4(value)      (reinterpret_cast<uchar4 *>(&(value))[0])
-#define FLOAT4(value)      (reinterpret_cast<float4 *>(&(value))[0])
-#define HALF2(value)       (reinterpret_cast<half2 *>(&(value))[0])
-#define UINT(value)        (reinterpret_cast<uint32_t *>(&(value))[0])
+#define UCHAR4(value) (reinterpret_cast<uchar4 *>(&(value))[0])
+#define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
+#define HALF2(value)  (reinterpret_cast<half2 *>(&(value))[0])
+#define UINT(value)   (reinterpret_cast<uint32_t *>(&(value))[0])
 
 /**
  * @brief 逐元素加法操作, 一次处理1个float元素
