@@ -55,12 +55,25 @@ __device__ __forceinline__ int reflect_101_no_branch(int coord, int size)
     return res;
 }
 
+/**
+ * @brief 基础的2D模糊核函数
+ * 使用全局内存访问，每个线程处理一个像素
+ * 
+ * @param in 输入图像数据指针
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_kernel(uint8_t *in, uint8_t *out, const int ks_w, const int ks_h, const int img_w,
                                const int img_h)
 {
+    // 计算当前线程对应的像素坐标
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
+    // 边界检查，超出图像范围的线程直接返回
     if (x >= img_w || y >= img_h)
         return;
 
@@ -71,6 +84,7 @@ __global__ void blur_u8_kernel(uint8_t *in, uint8_t *out, const int ks_w, const 
     int   sum    = 0;
     float count  = ks_w * ks_h; // 所有像素都会被处理
 
+    // 遍历卷积核窗口
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
         int yy = reflect_101(y + ky, img_h); // 使用BORDER_REFLECT_101
@@ -84,6 +98,17 @@ __global__ void blur_u8_kernel(uint8_t *in, uint8_t *out, const int ks_w, const 
     out[idx] = (uint8_t)roundf(sum / count);
 }
 
+/**
+ * @brief 无分支版本的2D模糊核函数
+ * 使用无分支的边界处理函数，可能在某些GPU架构上有更好的性能
+ * 
+ * @param in 输入图像数据指针
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_nb_kernel(uint8_t *in, uint8_t *out, const int ks_w, const int ks_h, const int img_w,
                                   const int img_h)
 {
@@ -100,6 +125,7 @@ __global__ void blur_u8_nb_kernel(uint8_t *in, uint8_t *out, const int ks_w, con
     int   sum    = 0;
     float count  = ks_w * ks_h;
 
+    // 使用无分支版本的边界处理函数
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
         int yy = reflect_101_no_branch(y + ky, img_h);
@@ -113,6 +139,17 @@ __global__ void blur_u8_nb_kernel(uint8_t *in, uint8_t *out, const int ks_w, con
     out[idx] = (uint8_t)roundf(sum / count);
 }
 
+/**
+ * @brief 使用共享内存优化的2D模糊核函数
+ * 通过共享内存减少全局内存访问次数，提高内存访问效率
+ * 
+ * @param in 输入图像数据指针
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_kernel_shared(uint8_t *in, uint8_t *out, const int ks_w, const int ks_h, const int img_w,
                                       const int img_h)
 {
@@ -167,6 +204,7 @@ __global__ void blur_u8_kernel_shared(uint8_t *in, uint8_t *out, const int ks_w,
     const int smem_start_x = tx;
     const int smem_start_y = ty;
 
+    // 在共享内存中进行卷积计算
     for (int ky = 0; ky < ks_h; ++ky)
     {
         for (int kx = 0; kx < ks_w; ++kx)
@@ -178,7 +216,16 @@ __global__ void blur_u8_kernel_shared(uint8_t *in, uint8_t *out, const int ks_w,
     out[y * img_w + x] = (uint8_t)roundf(sum / count);
 }
 
-// 横向一维滤波
+/**
+ * @brief 横向一维滤波核函数
+ * 可分离滤波的第一步，对每行进行水平方向的滤波
+ * 
+ * @param in 输入图像数据指针
+ * @param tmp 临时存储数组，存储水平滤波结果
+ * @param ks_w 卷积核宽度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_h_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w, int img_h)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -190,6 +237,7 @@ __global__ void blur_u8_h_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w,
     int half_w = ks_w / 2;
     int sum    = 0;
 
+    // 水平方向卷积
     for (int kx = -half_w; kx <= half_w; ++kx)
     {
         int xx = reflect_101_no_branch(x + kx, img_w);
@@ -200,7 +248,17 @@ __global__ void blur_u8_h_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w,
     tmp[y * img_w + x] = sum;
 }
 
-// 纵向一维滤波
+/**
+ * @brief 纵向一维滤波核函数
+ * 可分离滤波的第二步，对每列进行垂直方向的滤波
+ * 
+ * @param tmp 临时存储数组，包含水平滤波结果
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_v_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h, int img_w, int img_h)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -212,6 +270,7 @@ __global__ void blur_u8_v_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h,
     int half_h = ks_h / 2;
     int sum    = 0;
 
+    // 垂直方向卷积
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
         int yy = reflect_101_no_branch(y + ky, img_h);
@@ -222,7 +281,16 @@ __global__ void blur_u8_v_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h,
     out[y * img_w + x] = (uint8_t)roundf((float)sum / (ks_w * ks_h));
 }
 
-// 横向滤波 (shared memory 优化)
+/**
+ * @brief 横向滤波的共享内存优化版本
+ * 每个block处理一行，使用共享内存减少全局内存访问
+ * 
+ * @param in 输入图像数据指针
+ * @param tmp 临时存储数组，存储水平滤波结果
+ * @param ks_w 卷积核宽度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_h_shared_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w, int img_h)
 {
     extern __shared__ uint8_t smem[];
@@ -258,7 +326,17 @@ __global__ void blur_u8_h_shared_kernel(uint8_t *in, int32_t *tmp, int ks_w, int
     tmp[y * img_w + x] = sum;
 }
 
-// 纵向滤波 (shared memory 优化)
+/**
+ * @brief 纵向滤波的共享内存优化版本
+ * 使用共享内存减少全局内存访问
+ * 
+ * @param tmp 临时存储数组，包含水平滤波结果
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_v_shared_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h, int img_w, int img_h)
 {
     extern __shared__ int32_t smem2[];
@@ -296,7 +374,17 @@ __global__ void blur_u8_v_shared_kernel(int32_t *tmp, uint8_t *out, int ks_w, in
     out[y * img_w + x] = (uint8_t)roundf((float)sum / (ks_w * ks_h));
 }
 
-// 纵向滤波 (shared memory 优化 - 特殊网格版本，每个block处理一列)
+/**
+ * @brief 纵向滤波的共享内存优化版本（每个block处理一列）
+ * 特殊网格配置，每个block处理一列，可能在某些情况下有更好的内存访问模式
+ * 
+ * @param tmp 临时存储数组，包含水平滤波结果
+ * @param out 输出图像数据指针
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_v_shared_column_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h, int img_w, int img_h)
 {
     extern __shared__ int32_t smem2[];
@@ -333,7 +421,16 @@ __global__ void blur_u8_v_shared_column_kernel(int32_t *tmp, uint8_t *out, int k
     out[y * img_w + x] = (uint8_t)roundf((float)sum / (ks_w * ks_h));
 }
 
-// ---------------- 横向滑动窗口（每线程一整行） ----------------
+/**
+ * @brief 横向滑动窗口优化的滤波核函数
+ * 每个线程处理一整行，使用滑动窗口技术减少重复计算
+ * 
+ * @param in 输入图像数据指针（使用restrict关键字优化）
+ * @param tmp 临时存储数组（使用restrict关键字优化）
+ * @param ks_w 卷积核宽度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_h_sw_kernel(const uint8_t *__restrict__ in, int32_t *__restrict__ tmp, int ks_w, int img_w,
                                     int img_h)
 {
@@ -362,7 +459,17 @@ __global__ void blur_u8_h_sw_kernel(const uint8_t *__restrict__ in, int32_t *__r
     }
 }
 
-// ---------------- 纵向滑动窗口（每线程一整列） ----------------
+/**
+ * @brief 纵向滑动窗口优化的滤波核函数
+ * 每个线程处理一整列，使用滑动窗口技术减少重复计算
+ * 
+ * @param tmp 临时存储数组（使用restrict关键字优化）
+ * @param out 输出图像数据指针（使用restrict关键字优化）
+ * @param ks_w 卷积核宽度
+ * @param ks_h 卷积核高度
+ * @param img_w 图像宽度
+ * @param img_h 图像高度
+ */
 __global__ void blur_u8_v_sw_kernel(const int32_t *__restrict__ tmp, uint8_t *__restrict__ out, int ks_w, int ks_h,
                                     int img_w, int img_h)
 {
@@ -387,11 +494,18 @@ __global__ void blur_u8_v_sw_kernel(const int32_t *__restrict__ tmp, uint8_t *__
     {
         int prev = reflect_101_no_branch(y - half - 1, img_h); // 移出
         int next = reflect_101_no_branch(y + half, img_h);     // 移入
-        sum += tmp[next * img_w + x] - tmp[prev * img_w + x];  // 注意：用的是“上一 y 的 sum”来递推
+        sum += tmp[next * img_w + x] - tmp[prev * img_w + x];  // 注意：用的是"上一 y 的 sum"来递推
         out[y * img_w + x] = (uint8_t)((sum + area / 2) / area);
     }
 }
 
+/**
+ * @brief 使用共享内存的2D模糊函数接口
+ * 
+ * @param in 输入张量
+ * @param ksz 卷积核大小（正方形）
+ * @param out 输出张量
+ */
 void blur_u8_shared(torch::Tensor in, const int ksz, torch::Tensor out)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -409,6 +523,15 @@ void blur_u8_shared(torch::Tensor in, const int ksz, torch::Tensor out)
                                                       reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+/**
+ * @brief 可分离滤波函数接口
+ * 将2D卷积分解为两个1D卷积，提高计算效率
+ * 
+ * @param in 输入张量
+ * @param ksz 卷积核大小（正方形）
+ * @param out 输出张量
+ * @param tmp 临时张量，用于存储中间结果
+ */
 void blur_u8_split(torch::Tensor in, const int ksz, torch::Tensor out, torch::Tensor tmp)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -423,12 +546,23 @@ void blur_u8_split(torch::Tensor in, const int ksz, torch::Tensor out, torch::Te
     const int N = H * W;
     dim3      block(BLOCK_SIZE_X, BLOCK_SIZE_Y);
     dim3      grid(divUp(W, block.x), divUp(H, block.y));
+
+    // 先进行水平滤波
     blur_u8_h_kernel<<<grid, block>>>(reinterpret_cast<uint8_t *>(in.data_ptr()),
                                       reinterpret_cast<int32_t *>(tmp.data_ptr()), ksz, W, H);
+    // 再进行垂直滤波
     blur_u8_v_kernel<<<grid, block>>>(reinterpret_cast<int32_t *>(tmp.data_ptr()),
                                       reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+/**
+ * @brief 宏定义：生成标准的模糊函数绑定
+ * 
+ * @param packed_type 打包类型名称
+ * @param torch_type PyTorch张量类型
+ * @param element_type 元素类型
+ * @param n_elements 元素数量
+ */
 #define TORCH_BINDING_BLUR(packed_type, torch_type, element_type, n_elements)                                       \
     void blur_##packed_type(torch::Tensor in, const int ksz, torch::Tensor out)                                     \
     {                                                                                                               \
@@ -448,9 +582,19 @@ void blur_u8_split(torch::Tensor in, const int ksz, torch::Tensor out, torch::Te
                                                      H);                                                            \
     }
 
+// 生成基础模糊函数和无分支版本
 TORCH_BINDING_BLUR(u8, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_BLUR(u8_nb, torch::kUInt8, uint8_t, 1)
 
+/**
+ * @brief 可分离滤波的共享内存优化版本（版本1）
+ * 使用特殊的网格配置，每个block处理一列
+ * 
+ * @param in 输入张量
+ * @param ksz 卷积核大小（正方形）
+ * @param out 输出张量
+ * @param tmp 临时张量，用于存储中间结果
+ */
 void blur_u8_split_shared(torch::Tensor in, const int ksz, torch::Tensor out, torch::Tensor tmp)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -484,6 +628,15 @@ void blur_u8_split_shared(torch::Tensor in, const int ksz, torch::Tensor out, to
         reinterpret_cast<int32_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+/**
+ * @brief 可分离滤波的共享内存优化版本（版本2）
+ * 使用标准的网格配置
+ * 
+ * @param in 输入张量
+ * @param ksz 卷积核大小（正方形）
+ * @param out 输出张量
+ * @param tmp 临时张量，用于存储中间结果
+ */
 void blur_u8_split_shared2(torch::Tensor in, const int ksz, torch::Tensor out, torch::Tensor tmp)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -517,6 +670,15 @@ void blur_u8_split_shared2(torch::Tensor in, const int ksz, torch::Tensor out, t
     //     reinterpret_cast<int32_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+/**
+ * @brief 使用滑动窗口优化的可分离滤波函数
+ * 每个线程处理一整行或一整列，使用滑动窗口技术减少重复计算
+ * 
+ * @param in 输入张量
+ * @param ksz 卷积核大小（正方形）
+ * @param out 输出张量
+ * @param tmp 临时张量，用于存储中间结果
+ */
 void blur_u8_split_sw(torch::Tensor in, const int ksz, torch::Tensor out, torch::Tensor tmp)
 {
     CHECK_TORCH_TENSOR_DTYPE(in, torch::kUInt8)
@@ -545,6 +707,10 @@ void blur_u8_split_sw(torch::Tensor in, const int ksz, torch::Tensor out, torch:
                                              reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+/**
+ * @brief Python绑定模块
+ * 将所有CUDA函数绑定到Python接口
+ */
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(blur_u8)
