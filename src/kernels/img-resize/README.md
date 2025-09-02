@@ -95,3 +95,24 @@ src_y = (dst_y + 0.5) * fy - 0.5
 
 - 目标像素中心 (0.5, 0.5) → 源图坐标 (-0.25, -0.25)。
 
+
+
+#### opencv 原理
+
+```mermaid
+graph TB
+    A["目标像素 (dx, dy)"] --> B["计算源图像中的浮点坐标"]
+    B --> C["fx = (dx+0.5)*scale_x - 0.5<br/>fy = (dy+0.5)*scale_y - 0.5"]
+    C --> D["计算整数部分和小数部分"]
+    D --> E["sx = floor(fx), fractional_x = fx - sx<br/>sy = floor(fy), fractional_y = fy - sy"]
+    E --> F["水平插值系数计算"]
+    F --> G["alpha0 = 1 - fractional_x<br/>alpha1 = fractional_x"]
+    E --> H["垂直插值系数计算"]
+    H --> I["beta0 = 1 - fractional_y<br/>beta1 = fractional_y"]
+    G --> J["HResizeLinear<br/>水平插值"]
+    I --> K["VResizeLinear<br/>垂直插值"]
+    J --> L["temp[x] = src[sx]*alpha0 + src[sx+1]*alpha1"]
+    K --> M["dst[x] = temp0[x]*beta0 + temp1[x]*beta1"]
+    L --> K
+    M --> N["最终像素值"]
+```

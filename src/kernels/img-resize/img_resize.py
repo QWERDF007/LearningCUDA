@@ -1,5 +1,6 @@
 
 import time
+import math
 from pathlib import Path
 from functools import partial
 from typing import Optional
@@ -9,13 +10,14 @@ import torch.nn.functional as F
 from torch.utils.cpp_extension import load
 
 import numpy as np
+import cv2
 
 torch.set_grad_enabled(False)
 
 file = Path(__file__)
 
 sources = [
-    str(file.parent / "mat_transpose.cu")
+    str(file.parent / "img_resize.cu")
 ]
 
 extra_include_paths = [
@@ -23,7 +25,7 @@ extra_include_paths = [
 ]
 
 lib = load(
-    name="mat_transpose_lib",
+    name="img_resize_lib",
     sources=sources,
     extra_include_paths=extra_include_paths,
     extra_cuda_cflags=[                      
@@ -43,8 +45,9 @@ lib = load(
 def run_benchmark(
     perf_func: callable,
     a: torch.Tensor,
+    dH: int,
+    dW: int,
     tag: str,
-    out: Optional[torch.Tensor] = None,
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
@@ -54,23 +57,16 @@ def run_benchmark(
     用于测量CUDA核函数的执行时间性能
     """
     # warmup
-    if out is not None:
-        for i in range(warmup):
-            _ = perf_func(a, out)
-    else:
-        for i in range(warmup):
-            _ = perf_func(a)
+    
+    for i in range(warmup):
+        _ = perf_func(a, dH, dW)
     
     torch.cuda.synchronize()
     
     start = time.time()
     
-    if out is not None:
-        for i in range(iters):
-            perf_func(a, out)
-    else:
-        for i in range(iters):
-            out = perf_func(a)
+    for i in range(iters):
+        out = perf_func(a, dH, dW)
     
     torch.cuda.synchronize()
     
@@ -79,7 +75,7 @@ def run_benchmark(
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
 
-    expected = a.permute(1,0).cpu().numpy()
+    expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=cv2.INTER_LINEAR)
     out_np = out.cpu().numpy()
     decimal = 8
     for i in range(10):
@@ -106,12 +102,13 @@ Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
 
 for H, W, S in Sizes:
     print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}")
+    print(" " * 40 + f"H={H}, W={W}, S={S}")
 
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
-    out = torch.randn((W, H), dtype=torch.float32).cuda().contiguous()
+    dH = math.ceil(H * S)
+    dW = math.ceil(W * S)
     
-    run_benchmark(lib.mat_transpose_f32, a, "f32", out)
+    run_benchmark(lib.img_resize_f32, a, dH, dW, "f32")
 
     print("-" * 85)
     
