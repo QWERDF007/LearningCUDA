@@ -51,6 +51,7 @@ def run_benchmark(
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
+    baseline: float = None,
 ):
     """
     性能基准测试函数
@@ -78,37 +79,63 @@ def run_benchmark(
     expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=cv2.INTER_LINEAR)
     out_np = out.cpu().numpy()
     decimal = 8
-    for i in range(10):
+    ok = False
+    for i in range(12):
         try:
             np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            break
+            ok = True
         except:
             decimal -= 1
+        if ok:
+            break
    
 
     out_info = f"out_{tag}" 
-    
-    print(f"{out_info:>18}: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    sign = '-'
+    if decimal <= 0:
+        decimal = -decimal
+        sign = ''
+    speedup = mean_time / baseline if baseline is not None else 1.0
+    print(f"{out_info:>30}: (1e{sign}{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms, {speedup:.3f}x")
     
     if show_all:
         print(out)
     
     return out, mean_time
 
-Hs = [312, 1024, 4096]
-Ws = [485, 2048, 4096]
-Ss = [0.3, 0.5, 1.6, 2.0]
+Hs = [2, 45, 151, 224, 1024]
+Ws = [2, 200, 320, 448, 2048]
+Ss = [0.3, 0.5, 0.9, 1.7, 2.0, 2.4]
 Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
 
 for H, W, S in Sizes:
     print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}, S={S}")
+    dH = max(1, int(H * S))
+    dW = max(1, int(W * S))
+    print(" " * 40 + f"H={H}, W={W}, S={S}, dH={dH}, dW={dW}")
+    print(" " * 55 + "ch=1")
+    print("-" * 85)
 
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
-    dH = math.ceil(H * S)
-    dW = math.ceil(W * S)
     
-    run_benchmark(lib.img_resize_f32, a, dH, dW, "f32")
+    _, baseline = run_benchmark(lib.img_resize_no_align_float_float, a, dH, dW, "f32_no_align_float")
+    run_benchmark(lib.img_resize_no_align_float_double, a, dH, dW, "f32_no_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float", baseline=baseline)
+    run_benchmark(lib.img_resize_2D_align_float_float, a, dH, dW, "f32_2D_align_float", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_2D_align_float_double, a, dH, dW, "f32_2D_align_double", baseline=baseline)
+
+    print("-" * 85)
+    print(" " * 55 + "ch=3")
+
+    a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
+
+    _, baseline = run_benchmark(lib.img_resize_no_align_float_float, a, dH, dW, "f32_no_align_float")
+    run_benchmark(lib.img_resize_no_align_float_double, a, dH, dW, "f32_no_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float", baseline=baseline)
+    run_benchmark(lib.img_resize_2D_align_float_float, a, dH, dW, "f32_2D_align_float", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_2D_align_float_double, a, dH, dW, "f32_2D_align_double", baseline=baseline)
 
     print("-" * 85)
     
