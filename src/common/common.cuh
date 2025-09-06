@@ -11,7 +11,6 @@
 #define MAX_EXP_F16 __float2half(11.089866488461016f)
 #define MIN_EXP_F16 __float2half(-9.704060527839234f)
 
-
 /**
  * @brief 128位内存访问宏：将任意类型的值重新解释为float4向量进行128位内存访问
  * 通过将连续的内存区域重新解释为float4类型，实现一次性读写16个字节（128位）的数据，
@@ -59,4 +58,50 @@
 inline static int divUp(int a, int b)
 {
     return (a + b - 1) / b;
+}
+
+// OpenCV的定点算术常量
+static const int INTER_RESIZE_COEF_BITS  = 11;
+static const int INTER_RESIZE_COEF_SCALE = 1 << INTER_RESIZE_COEF_BITS; // 2048
+
+// CUDA版本的saturate_cast，精确模拟OpenCV的行为
+template<typename _Tp, typename _Tp2>
+__device__ __forceinline__ _Tp saturate_cast(_Tp2 v)
+{
+    if constexpr (std::is_same_v<_Tp, unsigned char>)
+    {
+        if constexpr (std::is_same_v<_Tp2, int>)
+        {
+            return (unsigned char)((unsigned)v <= 255U ? v : v > 0 ? 255 : 0);
+        }
+        else if constexpr (std::is_same_v<_Tp2, float> || std::is_same_v<_Tp2, double>)
+        {
+            int iv = round(v);
+            return saturate_cast<unsigned char>(iv);
+        }
+        else
+        {
+            return (_Tp)(v < 0 ? 0 : v > 255 ? 255 : v);
+        }
+    }
+    else if constexpr (std::is_same_v<_Tp, short>)
+    {
+        if constexpr (std::is_same_v<_Tp2, int>)
+        {
+            return (short)((unsigned)(v + 32768) <= 65535U ? v : v > 0 ? 32767 : -32768);
+        }
+        else if constexpr (std::is_same_v<_Tp2, float> || std::is_same_v<_Tp2, double>)
+        {
+            int iv = round(v);
+            return saturate_cast<short>(iv);
+        }
+        else
+        {
+            return (_Tp)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+        }
+    }
+    else
+    {
+        return (_Tp)v;
+    }
 }
