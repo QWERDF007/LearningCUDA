@@ -1,6 +1,7 @@
 
 import time
 import math
+import re
 from pathlib import Path
 from functools import partial
 from typing import Optional
@@ -51,7 +52,6 @@ def run_benchmark(
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
-    baseline: float = None,
 ):
     """
     性能基准测试函数
@@ -75,19 +75,70 @@ def run_benchmark(
     
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
-
     expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=cv2.INTER_LINEAR)
     out_np = out.cpu().numpy()
     decimal = 8
+    mismatch_info = ''
     ok = False
+    
+    # 存储特定精度的不匹配百分比
+    mismatch_1e3 = '0%'  # 1e-3精度的不匹配百分比
+    mismatch_1e6 = '0%'  # 1e-6精度的不匹配百分比
+    passed_decimal = None  # 通过测试的前一个精度
+    max_abs_diff_all = 0  # 所有未通过测试中的最大绝对差异
+    
     for i in range(12):
         try:
             np.testing.assert_array_almost_equal(out_np, expected, decimal)
             ok = True
-        except:
-            decimal -= 1
-        if ok:
+            if passed_decimal is None:
+                passed_decimal = decimal
             break
+        except AssertionError as e:
+            msg = str(e)
+            
+            # 提取不匹配百分比
+            match = re.search(r"Mismatched elements:\s*(\d+)\s*/\s*(\d+)\s*\(([\d\.]+%)\)", msg)
+            percent_str = None
+            if match:
+                percent_str = match.group(3)
+            
+            # 提取最大绝对差异
+            match = re.search(r"Max absolute difference:\s*([0-9.eE+-]+)", msg)
+            if match:
+                max_abs_diff = float(match.group(1))
+                max_abs_diff_all = max(max_abs_diff_all, max_abs_diff)
+            
+            # 记录特定精度的不匹配百分比
+            if decimal == 3:  # 1e-3
+                mismatch_1e3 = percent_str if percent_str else "0%"
+            elif decimal == 6:  # 1e-6
+                mismatch_1e6 = percent_str if percent_str else "0%"
+            
+            decimal -= 1
+    
+    # 如果在1e-3和1e-6之前就通过了测试，设置这两个精度的不匹配百分比为0
+    if passed_decimal is not None:
+        if passed_decimal > 3 and mismatch_1e3 is None:
+            mismatch_1e3 = "0%"
+        if passed_decimal > 6 and mismatch_1e6 is None:
+            mismatch_1e6 = "0%"
+    
+    # 构建mismatch_info字符串
+    info_parts = []
+    if passed_decimal is not None:
+        sign = '-'
+        if passed_decimal <= 0:
+            passed_decimal = -passed_decimal
+            sign = ''
+        info_parts.append(f"passed: 1e{sign}{passed_decimal}")
+    if mismatch_1e3 is not None:
+        info_parts.append(f"1e-3: {mismatch_1e3}")
+    if mismatch_1e6 is not None:
+        info_parts.append(f"1e-6: {mismatch_1e6}")
+    if max_abs_diff_all:
+        info_parts.append(f"max_diff: {max_abs_diff_all}")
+    mismatch_info = ", ".join(info_parts)
    
 
     out_info = f"out_{tag}" 
@@ -95,47 +146,57 @@ def run_benchmark(
     if decimal <= 0:
         decimal = -decimal
         sign = ''
-    speedup = mean_time / baseline if baseline is not None else 1.0
-    print(f"{out_info:>30}: (1e{sign}{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms, {speedup:.3f}x")
+    print(f"{out_info:>25}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)
     
-    return out, mean_time
+    return out, mean_time, tag
 
-Hs = [2, 45, 151, 224, 1024]
-Ws = [2, 200, 320, 448, 2048]
+# Hs = [2, 45, 151, 224, 1024]
+# Ws = [2, 200, 320, 448, 2048]
+Hs = [2048]
+Ws = [1024]
 Ss = [0.3, 0.5, 0.9, 1.7, 2.0, 2.4]
 Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
 
 for H, W, S in Sizes:
     print("-" * 85)
+    print(" " * 40 + f"H={H}, W={W}, S={S}")
+    print("-" * 85)
     dH = max(1, int(H * S))
     dW = max(1, int(W * S))
-    print(" " * 40 + f"H={H}, W={W}, S={S}, dH={dH}, dW={dW}")
-    print(" " * 55 + "ch=1")
+    print(" " * 40 + f"dH={dH}, dW={dW}, ch=1")
     print("-" * 85)
 
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     
-    _, baseline = run_benchmark(lib.img_resize_no_align_float_float, a, dH, dW, "f32_no_align_float")
-    run_benchmark(lib.img_resize_no_align_float_double, a, dH, dW, "f32_no_align_double", baseline=baseline)
-    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float", baseline=baseline)
-    run_benchmark(lib.img_resize_2D_align_float_float, a, dH, dW, "f32_2D_align_float", baseline=baseline)
-    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double", baseline=baseline)
-    run_benchmark(lib.img_resize_2D_align_float_double, a, dH, dW, "f32_2D_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float")
+    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double")
+    # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
+    # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
+    
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+
+    run_benchmark(lib.img_resize_align_uint8_t_float, a, dH, dW, "u8_align_float")
+    run_benchmark(lib.img_resize_u8_align_uint8_t_float, a, dH, dW, "u8x_align_float")
+    run_benchmark(lib.img_resize_align_uint8_t_double, a, dH, dW, "u8_align_double")
 
     print("-" * 85)
-    print(" " * 55 + "ch=3")
+    print(" " * 40 + f"dH={dH}, dW={dW}, ch=3")
 
     a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
 
-    _, baseline = run_benchmark(lib.img_resize_no_align_float_float, a, dH, dW, "f32_no_align_float")
-    run_benchmark(lib.img_resize_no_align_float_double, a, dH, dW, "f32_no_align_double", baseline=baseline)
-    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float", baseline=baseline)
-    run_benchmark(lib.img_resize_2D_align_float_float, a, dH, dW, "f32_2D_align_float", baseline=baseline)
-    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double", baseline=baseline)
-    run_benchmark(lib.img_resize_2D_align_float_double, a, dH, dW, "f32_2D_align_double", baseline=baseline)
+    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float")
+    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double")
+    # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
+    # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
+
+    a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
+
+    run_benchmark(lib.img_resize_align_uint8_t_float, a, dH, dW, "u8_align_float")
+    run_benchmark(lib.img_resize_u8_align_uint8_t_float, a, dH, dW, "u8x_align_float")
+    run_benchmark(lib.img_resize_align_uint8_t_double, a, dH, dW, "u8_align_double")
 
     print("-" * 85)
     
