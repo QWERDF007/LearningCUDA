@@ -1,10 +1,16 @@
 #include "common.cuh"
 
+#define TILE_W 16
+#define TILE_H 16
+
+/**
+ * @brief 最大边缩放到 dst，再 padding 小边，HWC -> CHW, BGR -> RGB
+ */
 template<int chs>
 __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x, const double scale_y, const int src_h,
                                   const int src_w, const int src_line_width, const int dst_h, const int dst_w,
-                                  const int dst_line_width, const int dst_N, const int left, const int right,
-                                  const int top, const int bottom, const int temp_w, const int temp_h)
+                                  const int dst_N, const int left, const int right, const int top, const int bottom,
+                                  const int temp_w, const int temp_h)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= dst_N) // 越界
@@ -13,7 +19,7 @@ __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x
     const int dst_x = idx % dst_w;
     const int dst_y = idx / dst_w;
 
-    const int dst_idx = dst_y * dst_line_width + dst_x * chs;
+    const int dst_idx = dst_y * dst_w + dst_x; // 对于CHW格式，基础索引
 
     // 检查是否在填充区域
     if (dst_x < left || dst_x >= right || dst_y < top || dst_y >= bottom)
@@ -21,7 +27,7 @@ __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x
 #pragma unroll
         for (int i = 0; i < chs; ++i)
         {
-            dst[dst_idx + i] = 114.0f / 255.0f; // 灰色填充值归一化
+            dst[dst_idx + i * dst_N] = 114.0f / 255.0f; // 灰色填充值归一化
         }
         return;
     }
@@ -51,9 +57,7 @@ __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x
     int sx1 = min(sx + 1, src_w - 1);
 
     short alpha0 = saturate_cast<short>((1.0f - fx) * (float)INTER_RESIZE_COEF_SCALE);
-    short alpha1 = saturate_cast<short>(fx * (float)INTER_RESIZE_COEF_SCALE);
-
-    alpha1 = INTER_RESIZE_COEF_SCALE - alpha0;
+    short alpha1 = INTER_RESIZE_COEF_SCALE - alpha0;
 
     // ========== 阶段2：垂直插值（完全按OpenCV方式） ==========
     float fyy = (temp_y + 0.5) * scale_y - 0.5;
@@ -74,9 +78,7 @@ __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x
     int sy1 = min(sy + 1, src_h - 1);
 
     short beta0 = saturate_cast<short>((1.0f - fyy) * (float)INTER_RESIZE_COEF_SCALE);
-    short beta1 = saturate_cast<short>(fyy * (float)INTER_RESIZE_COEF_SCALE);
-
-    beta1 = INTER_RESIZE_COEF_SCALE - beta0;
+    short beta1 = INTER_RESIZE_COEF_SCALE - beta0;
 
     // 获取源数据指针
     uint8_t *row0 = src + sy * src_line_width;
@@ -97,7 +99,9 @@ __global__ void letter_box_kernel(uint8_t *src, float *dst, const double scale_x
         int result = (term1 + term2 + 2) >> 2;     // 加法、加2、右移2位
 
         // 使用与OpenCV完全相同的转换方式：直接uchar()转换
-        dst[dst_idx + i] = result / 255.0f;
+        // BGR到RGB转换：交换通道0和通道2
+        const int channel_idx              = (chs == 3 && i < 3) ? (2 - i) : i;
+        dst[dst_idx + channel_idx * dst_N] = result / 255.0f;
     }
 }
 
@@ -110,10 +114,9 @@ torch::Tensor img_letter_box(torch::Tensor src, const int dst_height, const int 
 
     auto          options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA, 0);
     torch::Tensor dst     = src.dim() == 2 ? torch::zeros({dst_height, dst_width}, options)
-                                           : torch::zeros({dst_height, dst_width, src_ch}, options);
+                                           : torch::zeros({src_ch, dst_height, dst_width}, options);
 
     const int src_line_size = src_width * src_ch;
-    const int dst_line_size = dst_width * src_ch;
     const int dst_N         = dst_height * dst_width;
 
     const double r_w   = (double)dst_width / src_width;
@@ -133,10 +136,8 @@ torch::Tensor img_letter_box(torch::Tensor src, const int dst_height, const int 
     int dh = (dst_height - temp_h) / 2;
 
     // 计算填充参数
-    const int pad_top    = (int)round(dh - 0.1);
-    const int pad_bottom = dst_height - pad_top - temp_h;
-    const int pad_left   = (int)round(dw - 0.1);
-    const int pad_right  = dst_width - pad_left - temp_w;
+    const int pad_top  = (int)round(dh - 0.1);
+    const int pad_left = (int)round(dw - 0.1);
 
     // 有效图像区域的边界（坐标范围）
     const int top    = pad_top;
@@ -153,14 +154,12 @@ torch::Tensor img_letter_box(torch::Tensor src, const int dst_height, const int 
     if (src_ch == 1)
     {
         letter_box_kernel<1><<<grid, block>>>(src_ptr, dst_ptr, scale_x, scale_y, src_height, src_width, src_line_size,
-                                              dst_height, dst_width, dst_line_size, dst_N, left, right, top, bottom,
-                                              temp_w, temp_h);
+                                              dst_height, dst_width, dst_N, left, right, top, bottom, temp_w, temp_h);
     }
     else if (src_ch == 3)
     {
         letter_box_kernel<3><<<grid, block>>>(src_ptr, dst_ptr, scale_x, scale_y, src_height, src_width, src_line_size,
-                                              dst_height, dst_width, dst_line_size, dst_N, left, right, top, bottom,
-                                              temp_w, temp_h);
+                                              dst_height, dst_width, dst_N, left, right, top, bottom, temp_w, temp_h);
     }
 
     return dst;

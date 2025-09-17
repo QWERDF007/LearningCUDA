@@ -78,6 +78,10 @@ def cv_baseline(img, input_w, input_h):
     # 再填充 - 使用灰色(114, 114, 114)填充
     out = cv2.copyMakeBorder(re, top, bottom, left, right, 
                             cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    # BGR -> RGB, HWC -> CHW
+    if len(out.shape) == 3:
+        out = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
+        out = out.transpose(2, 0, 1)  # HWC -> CHW
     out = out.astype(np.float32) / 255.0
     return out
     
@@ -220,11 +224,13 @@ for H, W, S in Sizes:
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.img_letter_box, a, dH, dW, "letter_box_cuda")
+    run_benchmark(lib.img_letter_box_shared, a, dH, dW, "letter_box_cuda_shared")
     
     print(" " * 40 + f"dH={dH}, dW={dW}, ch=3")
 
     a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.img_letter_box, a, dH, dW, "letter_box_cuda")
+    run_benchmark(lib.img_letter_box_shared, a, dH, dW, "letter_box_cuda_shared")
     
     print("-" * 85)
     
