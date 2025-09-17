@@ -49,6 +49,7 @@ def run_benchmark(
     dH: int,
     dW: int,
     tag: str,
+    interpolation: int,
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
@@ -75,7 +76,7 @@ def run_benchmark(
     
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
-    expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=cv2.INTER_LINEAR)
+    expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=interpolation)
     out_np = out.cpu().numpy()
     decimal = 8
     mismatch_info = ''
@@ -171,32 +172,36 @@ for H, W, S in Sizes:
 
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     
-    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float")
-    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double")
-    # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
-    # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
+    run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_shared_2D_float_float, a, dH, dW, "f32_bilinear_shared_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_shared_2D_float_double, a, dH, dW, "f32_bilinear_shared_double", interpolation=cv2.INTER_LINEAR)
     
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
-    run_benchmark(lib.img_resize_align_uint8_t_float, a, dH, dW, "u8_align_float")
-    run_benchmark(lib.img_resize_u8_align_uint8_t_float, a, dH, dW, "u8x_align_float")
-    run_benchmark(lib.img_resize_align_uint8_t_double, a, dH, dW, "u8_align_double")
+    run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
 
     print("-" * 85)
     print(" " * 40 + f"dH={dH}, dW={dW}, ch=3")
 
     a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
 
-    run_benchmark(lib.img_resize_align_float_float, a, dH, dW, "f32_align_float")
-    run_benchmark(lib.img_resize_align_float_double, a, dH, dW, "f32_align_double")
+    run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
     # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
     # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
 
     a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
 
-    run_benchmark(lib.img_resize_align_uint8_t_float, a, dH, dW, "u8_align_float")
-    run_benchmark(lib.img_resize_u8_align_uint8_t_float, a, dH, dW, "u8x_align_float")
-    run_benchmark(lib.img_resize_align_uint8_t_double, a, dH, dW, "u8_align_double")
+    run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
+    run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
 
     print("-" * 85)
     

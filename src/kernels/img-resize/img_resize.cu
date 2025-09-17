@@ -4,9 +4,9 @@
 // (dx, dy) 是像素的左上角坐标，(dx + 0.5, dy + 0.5) 是像素的中心坐标
 // -0.5: 保证源图和目标图的像素中心对齐
 template<typename T, typename C, int chs>
-__global__ void resize_align_kernel(T *src, T *dst, const double scale_x, const double scale_y, const int src_h,
-                                    const int src_w, const int src_line_width, const int dst_h, const int dst_w,
-                                    const int dst_line_width, const int dst_N)
+__global__ void resize_bilinear_kernel(T *src, T *dst, const double scale_x, const double scale_y, const int src_h,
+                                       const int src_w, const int src_line_width, const int dst_h, const int dst_w,
+                                       const int dst_line_width, const int dst_N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= dst_N) // 越界
@@ -77,9 +77,9 @@ __global__ void resize_align_kernel(T *src, T *dst, const double scale_x, const 
 }
 
 template<typename T, typename C, int chs>
-__global__ void resize_u8_align_kernel(uint8_t *src, uint8_t *dst, const double scale_x, const double scale_y,
-                                       const int src_h, const int src_w, const int src_line_width, const int dst_h,
-                                       const int dst_w, const int dst_line_width, const int dst_N)
+__global__ void u8_resize_bilinear_kernel(uint8_t *src, uint8_t *dst, const double scale_x, const double scale_y,
+                                          const int src_h, const int src_w, const int src_line_width, const int dst_h,
+                                          const int dst_w, const int dst_line_width, const int dst_N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= dst_N) // 越界
@@ -157,8 +157,8 @@ __global__ void resize_u8_align_kernel(uint8_t *src, uint8_t *dst, const double 
 }
 
 template<typename T, typename C = double, int chs = 1>
-__global__ void resize_align_2D_kernel(T *src, T *dst, const double scale_x, const double scale_y, const int src_h,
-                                       const int src_w, const int dst_h, const int dst_w)
+__global__ void resize_bilinear_2D_kernel(T *src, T *dst, const double scale_x, const double scale_y, const int src_h,
+                                          const int src_w, const int dst_h, const int dst_w)
 {
     const int dst_x = blockIdx.x * blockDim.x + threadIdx.x;
     const int dst_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -226,9 +226,9 @@ __global__ void resize_align_2D_kernel(T *src, T *dst, const double scale_x, con
 // CH: 通道数（1/3/4）
 // 计算全部使用 float，提高精度与吞吐
 template<typename T, typename CalType, int CH>
-__global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restrict__ dst, const double scale_x,
-                                           const double scale_y, int src_h, int src_w, int src_line_width, int dst_h,
-                                           int dst_w, int dst_line_width)
+__global__ void resize_bilinear_shared_kernel(const T *__restrict__ src, T *__restrict__ dst, const double scale_x,
+                                              const double scale_y, int src_h, int src_w, int src_line_width, int dst_h,
+                                              int dst_w, int dst_line_width)
 {
     const int dx = blockIdx.x * blockDim.x + threadIdx.x;
     const int dy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -346,7 +346,7 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
 }
 
 #define TORCH_BINDING_RESIZE(tag, th_type, element_type, cal_type, n_pack)                                            \
-    torch::Tensor img_resize_##tag##_##element_type##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w) \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w)              \
     {                                                                                                                 \
         CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
         const int     N             = dst_h * dst_w;                                                                  \
@@ -366,13 +366,13 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
         dim3         grid(divUp(N, THREADS));                                                                         \
         if (src_ch == 1)                                                                                              \
         {                                                                                                             \
-            resize_##tag##_kernel<element_type, cal_type, 1><<<grid, block>>>(                                        \
+            tag##_kernel<element_type, cal_type, 1><<<grid, block>>>(                                                 \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size, N);                       \
         }                                                                                                             \
         else if (src_ch == 3)                                                                                         \
         {                                                                                                             \
-            resize_##tag##_kernel<element_type, cal_type, 3><<<grid, block>>>(                                        \
+            tag##_kernel<element_type, cal_type, 3><<<grid, block>>>(                                                 \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size, N);                       \
         }                                                                                                             \
@@ -380,8 +380,7 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
     }
 
 #define TORCH_BINDING_RESIZE_2D(tag, th_type, element_type, cal_type, n_pack)                                         \
-    torch::Tensor img_resize_2D_##tag##_##element_type##_##cal_type(torch::Tensor src, const int dst_h,               \
-                                                                    const int dst_w)                                  \
+    torch::Tensor tag##_2D_##element_type##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w)           \
     {                                                                                                                 \
         CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
         const int     src_h   = src.size(0);                                                                          \
@@ -398,13 +397,13 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
         dim3         grid(divUp(dst_w, block.x), divUp(dst_h, block.y));                                              \
         if (src_ch == 1)                                                                                              \
         {                                                                                                             \
-            resize_##tag##_2D_kernel<element_type, cal_type, 1><<<grid, block>>>(                                     \
+            tag##_2D_kernel<element_type, cal_type, 1><<<grid, block>>>(                                              \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, dst_h, dst_w);                                                        \
         }                                                                                                             \
         else if (src_ch == 3)                                                                                         \
         {                                                                                                             \
-            resize_##tag##_2D_kernel<element_type, cal_type, 3><<<grid, block>>>(                                     \
+            tag##_2D_kernel<element_type, cal_type, 3><<<grid, block>>>(                                              \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, dst_h, dst_w);                                                        \
         }                                                                                                             \
@@ -412,8 +411,7 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
     }
 
 #define TORCH_BINDING_RESIZE_2D_SHARED(tag, th_type, element_type, cal_type, n_pack)                                  \
-    torch::Tensor img_resize_2D_##tag##_##element_type##_##cal_type(torch::Tensor src, const int dst_h,               \
-                                                                    const int dst_w)                                  \
+    torch::Tensor tag##_2D_##element_type##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w)           \
     {                                                                                                                 \
         CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
         const int     src_h         = src.size(0);                                                                    \
@@ -441,43 +439,43 @@ __global__ void resize_align_shared_kernel(const T *__restrict__ src, T *__restr
             = static_cast<size_t>(maxTileW) * static_cast<size_t>(maxTileH) * src_ch * sizeof(element_type);          \
         if (src_ch == 1)                                                                                              \
         {                                                                                                             \
-            resize_##tag##_kernel<element_type, cal_type, 1><<<grid, block, shmem_bytes>>>(                           \
+            tag##_kernel<element_type, cal_type, 1><<<grid, block, shmem_bytes>>>(                                    \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size);                          \
         }                                                                                                             \
         else if (src_ch == 3)                                                                                         \
         {                                                                                                             \
-            resize_##tag##_kernel<element_type, cal_type, 3><<<grid, block, shmem_bytes>>>(                           \
+            tag##_kernel<element_type, cal_type, 3><<<grid, block, shmem_bytes>>>(                                    \
                 reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 scale_x, scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size);                          \
         }                                                                                                             \
         return dst;                                                                                                   \
     }
 
-TORCH_BINDING_RESIZE(align, torch::kFloat32, float, float, 1)
-TORCH_BINDING_RESIZE(align, torch::kFloat32, float, double, 1)
+TORCH_BINDING_RESIZE(resize_bilinear, torch::kFloat32, float, float, 1)
+TORCH_BINDING_RESIZE(resize_bilinear, torch::kFloat32, float, double, 1)
 
-TORCH_BINDING_RESIZE(align, torch::kUInt8, uint8_t, float, 1)
-TORCH_BINDING_RESIZE(u8_align, torch::kUInt8, uint8_t, float, 1)
-TORCH_BINDING_RESIZE(align, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_RESIZE(resize_bilinear, torch::kUInt8, uint8_t, float, 1)
+TORCH_BINDING_RESIZE(resize_bilinear, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_RESIZE(u8_resize_bilinear, torch::kUInt8, uint8_t, float, 1)
 
-// TORCH_BINDING_RESIZE_2D(f32_2D, torch::kFloat32, float, float, 1)
-// TORCH_BINDING_RESIZE_2D(f32_2D, torch::kFloat32, float, double, 1)
+TORCH_BINDING_RESIZE_2D(resize_bilinear, torch::kFloat32, float, float, 1)
+TORCH_BINDING_RESIZE_2D(resize_bilinear, torch::kFloat32, float, double, 1)
 
-TORCH_BINDING_RESIZE_2D_SHARED(align_shared, torch::kFloat32, float, float, 1)
-TORCH_BINDING_RESIZE_2D_SHARED(align_shared, torch::kFloat32, float, double, 1)
+TORCH_BINDING_RESIZE_2D_SHARED(resize_bilinear_shared, torch::kFloat32, float, float, 1)
+TORCH_BINDING_RESIZE_2D_SHARED(resize_bilinear_shared, torch::kFloat32, float, double, 1)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_align_float_float)
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_align_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_float_double)
 
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_align_uint8_t_float)
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_u8_align_uint8_t_float)
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_align_uint8_t_double)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_uint8_t_double)
+    TORCH_BINDING_COMMON_EXTENSION(u8_resize_bilinear_uint8_t_float)
 
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_2D_align_shared_float_float)
-    TORCH_BINDING_COMMON_EXTENSION(img_resize_2D_align_shared_float_double)
-    // TORCH_BINDING_COMMON_EXTENSION(img_resize_f32_2D_float)
-    // TORCH_BINDING_COMMON_EXTENSION(img_resize_f32_2D_double)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_shared_2D_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_shared_2D_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_2D_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_2D_float_double)
 }
