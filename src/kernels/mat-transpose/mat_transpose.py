@@ -79,7 +79,7 @@ def run_benchmark(
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
 
-    expected = a.permute(1,0).cpu().numpy()
+    expected = a.T.cpu().numpy()
     out_np = out.cpu().numpy()
     decimal = 8
     for i in range(10):
@@ -92,15 +92,15 @@ def run_benchmark(
 
     out_info = f"out_{tag}" 
     
-    print(f"{out_info:>18}: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    print(f"{out_info:>30}: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)
     
     return out, mean_time
 
-Hs = [1024, 2048, 4096]
-Ws = [1024, 2048, 4096]
+Hs = [1024, 2048, 4096, 8192]
+Ws = [1024, 2048, 4096, 8192]
 Sizes = [(H, W) for H in Hs for W in Ws]
 
 for H, W in Sizes:
@@ -110,7 +110,20 @@ for H, W in Sizes:
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     out = torch.randn((W, H), dtype=torch.float32).cuda().contiguous()
     
-    run_benchmark(lib.mat_transpose_f32, a, "f32", out)
+    run_benchmark(lib.mat_transpose_f32_coalesced_read, a, "f32_coalesced_read", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_read, a, "f32x4_coalesced_read", out)
+    run_benchmark(lib.mat_transpose_f32_coalesced_write, a, "f32_coalesced_write", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_write, a, "f32x4_coalesced_write", out)
+
+    run_benchmark(lib.mat_transpose_f32_coalesced_read_2d, a, "f32_coalesced_read_2d", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_read_2d, a, "f32x4_coalesced_read_2d", out)
+    run_benchmark(lib.mat_transpose_f32_coalesced_write_2d, a, "f32_coalesced_write_2d", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_write_2d, a, "f32x4_coalesced_write_2d", out)
+    # run_benchmark(lib.mat_transpose_f32_2d_1, a, "f32_2d_1", out)
+    # run_benchmark(lib.mat_transpose_f32_2d_2, a, "f32_2d_2", out)
+    # run_benchmark(lib.mat_transpose_f32_2d_3, a, "f32_2d_3", out)
+    run_benchmark(lib.mat_transpose_f32_2d_shared, a, "f32_2d_shared", out)
+    run_benchmark(lib.mat_transpose_f32_2d_shared_2, a, "f32_2d_shared_2", out)
 
     print("-" * 85)
     
