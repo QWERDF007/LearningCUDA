@@ -146,7 +146,7 @@ def run_benchmark(
     if decimal <= 0:
         decimal = -decimal
         sign = ''
-    print(f"{out_info:>25}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    print(f"{out_info:>40}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)

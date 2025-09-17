@@ -108,9 +108,7 @@ __global__ void resize_u8_align_kernel(uint8_t *src, uint8_t *dst, const double 
     int sx1 = min(sx + 1, src_w - 1);
 
     short alpha0 = saturate_cast<short>((1.0f - fx) * (float)INTER_RESIZE_COEF_SCALE);
-    short alpha1 = saturate_cast<short>(fx * (float)INTER_RESIZE_COEF_SCALE);
-
-    alpha1 = INTER_RESIZE_COEF_SCALE - alpha0;
+    short alpha1 = INTER_RESIZE_COEF_SCALE - alpha0;
 
     // ========== 阶段2：垂直插值（完全按OpenCV方式） ==========
     float fyy = (dst_y + 0.5) * scale_y - 0.5;
@@ -131,9 +129,7 @@ __global__ void resize_u8_align_kernel(uint8_t *src, uint8_t *dst, const double 
     int sy1 = min(sy + 1, src_h - 1);
 
     short beta0 = saturate_cast<short>((1.0f - fyy) * (float)INTER_RESIZE_COEF_SCALE);
-    short beta1 = saturate_cast<short>(fyy * (float)INTER_RESIZE_COEF_SCALE);
-
-    beta1 = INTER_RESIZE_COEF_SCALE - beta0;
+    short beta1 = INTER_RESIZE_COEF_SCALE - beta0;
 
     // 获取源数据指针
     uint8_t *row0 = src + sy * src_line_width;
