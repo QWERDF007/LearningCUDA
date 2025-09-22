@@ -4,7 +4,7 @@
 
 #define BLOCK_SIZE_X 32
 #define BLOCK_SIZE_Y 16
-#define THREADS      512
+#define THREADS      256
 
 #define MAX_EXP_F32 88.3762626647949f
 #define MIN_EXP_F32 -88.3762626647949f
@@ -60,48 +60,81 @@ inline static int divUp(int a, int b)
     return (a + b - 1) / b;
 }
 
+// OpenCV的常量定义
+#define CV_PI  3.1415926535897932384626433832795
+#define CV_2PI 6.283185307179586476925286766559
+
 // OpenCV的定点算术常量
-static const int INTER_RESIZE_COEF_BITS  = 11;
-static const int INTER_RESIZE_COEF_SCALE = 1 << INTER_RESIZE_COEF_BITS; // 2048
+static const int INTER_RESIZE_COEF_BITS    = 11;
+static const int INTER_RESIZE_COEF_SCALE   = 1 << INTER_RESIZE_COEF_BITS;                       // 2048
+static const int SHIFT                     = INTER_RESIZE_COEF_BITS * 2;                        // 22
+static const int DELTA                     = 1 << (SHIFT - 1);                                  // 2097152
+static const int INTER_RESIZE_COEF_SCALE_2 = INTER_RESIZE_COEF_SCALE * INTER_RESIZE_COEF_SCALE; // 4194304
 
 // CUDA版本的saturate_cast，精确模拟OpenCV的行为
 template<typename _Tp, typename _Tp2>
-__device__ __forceinline__ _Tp saturate_cast(_Tp2 v)
+__device__ __forceinline__ _Tp saturate_cast(_Tp2 v);
+
+template<typename _Tp>
+__device__ __forceinline__ _Tp saturate_cast(float v)
 {
-    if constexpr (std::is_same_v<_Tp, unsigned char>)
-    {
-        if constexpr (std::is_same_v<_Tp2, int>)
-        {
-            return (unsigned char)((unsigned)v <= 255U ? v : v > 0 ? 255 : 0);
-        }
-        else if constexpr (std::is_same_v<_Tp2, float> || std::is_same_v<_Tp2, double>)
-        {
-            int iv = round(v);
-            return saturate_cast<unsigned char>(iv);
-        }
-        else
-        {
-            return (_Tp)(v < 0 ? 0 : v > 255 ? 255 : v);
-        }
-    }
-    else if constexpr (std::is_same_v<_Tp, short>)
-    {
-        if constexpr (std::is_same_v<_Tp2, int>)
-        {
-            return (short)((unsigned)(v + 32768) <= 65535U ? v : v > 0 ? 32767 : -32768);
-        }
-        else if constexpr (std::is_same_v<_Tp2, float> || std::is_same_v<_Tp2, double>)
-        {
-            int iv = round(v);
-            return saturate_cast<short>(iv);
-        }
-        else
-        {
-            return (_Tp)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
-        }
-    }
-    else
-    {
-        return (_Tp)v;
-    }
+    return _Tp(v);
+}
+
+template<typename _Tp>
+__device__ __forceinline__ _Tp saturate_cast(double v)
+{
+    return _Tp(v);
+}
+
+template<>
+__device__ __forceinline__ unsigned char saturate_cast(int v)
+{
+    return (unsigned char)((unsigned)v <= 255U ? v : v > 0 ? 255 : 0);
+}
+
+template<>
+__device__ __forceinline__ unsigned char saturate_cast(float v)
+{
+    int iv = round(v);
+    return saturate_cast<unsigned char>(iv);
+}
+
+template<>
+__device__ __forceinline__ unsigned char saturate_cast(double v)
+{
+    int iv = round(v);
+    return saturate_cast<unsigned char>(iv);
+}
+
+template<>
+__device__ __forceinline__ short saturate_cast(int v)
+{
+    return (short)((unsigned)(v + 32768) <= 65535U ? v : v > 0 ? 32767 : -32768);
+}
+
+template<>
+__device__ __forceinline__ short saturate_cast(float v)
+{
+    int iv = round(v);
+    return saturate_cast<short>(iv);
+}
+
+template<>
+__device__ __forceinline__ short saturate_cast(double v)
+{
+    int iv = round(v);
+    return saturate_cast<short>(iv);
+}
+
+template<>
+__device__ __forceinline__ int saturate_cast(float v)
+{
+    return round(v);
+}
+
+template<>
+__device__ __forceinline__ int saturate_cast(double v)
+{
+    return round(v);
 }

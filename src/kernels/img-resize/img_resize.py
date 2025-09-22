@@ -83,6 +83,7 @@ def run_benchmark(
     ok = False
     
     # 存储特定精度的不匹配百分比
+    mismatch_1e1 = '0%'  # 1e-1精度的不匹配百分比
     mismatch_1e3 = '0%'  # 1e-3精度的不匹配百分比
     mismatch_1e6 = '0%'  # 1e-6精度的不匹配百分比
     passed_decimal = None  # 通过测试的前一个精度
@@ -115,6 +116,8 @@ def run_benchmark(
                 mismatch_1e3 = percent_str if percent_str else "0%"
             elif decimal == 6:  # 1e-6
                 mismatch_1e6 = percent_str if percent_str else "0%"
+            elif decimal == 1: # 1e-1
+                mismatch_1e1 = percent_str if percent_str else "0%"
             
             decimal -= 1
     
@@ -124,6 +127,8 @@ def run_benchmark(
             mismatch_1e3 = "0%"
         if passed_decimal > 6 and mismatch_1e6 is None:
             mismatch_1e6 = "0%"
+        elif passed_decimal > 6 and mismatch_1e1 is None:
+            mismatch_1e1 = "0%"
     
     # 构建mismatch_info字符串
     info_parts = []
@@ -133,6 +138,8 @@ def run_benchmark(
             passed_decimal = -passed_decimal
             sign = ''
         info_parts.append(f"passed: 1e{sign}{passed_decimal}")
+    if mismatch_1e1 is not None:
+        info_parts.append(f"1e-1: {mismatch_1e1}")
     if mismatch_1e3 is not None:
         info_parts.append(f"1e-3: {mismatch_1e3}")
     if mismatch_1e6 is not None:
@@ -160,6 +167,8 @@ Hs = [2048]
 Ws = [1024]
 Ss = [0.3, 0.5, 0.9, 1.7, 2.0, 2.4]
 Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
+INTER_TYPES =['INTER_LINEAR', 'INTER_NEAREST', 'INTER_CUBIC', 'INTER_LANCZOS4', 'INTER_AREA', 'ALL']
+INTER_TYPE = 'INTER_AREA'
 
 for H, W, S in Sizes:
     print("-" * 85)
@@ -172,36 +181,126 @@ for H, W, S in Sizes:
 
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     
-    run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_shared_2D_float_float, a, dH, dW, "f32_bilinear_shared_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_shared_2D_float_double, a, dH, dW, "f32_bilinear_shared_double", interpolation=cv2.INTER_LINEAR)
+    if INTER_TYPE == 'INTER_LINEAR' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
+        # run_benchmark(lib.resize_bilinear_shared_2D_float_float, a, dH, dW, "f32_bilinear_shared_float", interpolation=cv2.INTER_LINEAR)
+        # run_benchmark(lib.resize_bilinear_shared_2D_float_double, a, dH, dW, "f32_bilinear_shared_double", interpolation=cv2.INTER_LINEAR)
+
+    if INTER_TYPE == 'INTER_NEAREST' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_float_float, a, dH, dW, "f32_nearest_float", interpolation=cv2.INTER_NEAREST)
+        run_benchmark(lib.resize_nearest_float_double, a, dH, dW, "f32_nearest_double", interpolation=cv2.INTER_NEAREST)
+
+    if INTER_TYPE == 'INTER_CUBIC' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bicubic_float_float, a, dH, dW, "f32_bicubic_float", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.resize_bicubic_float_double, a, dH, dW, "f32_bicubic_double", interpolation=cv2.INTER_CUBIC)
+
+    if INTER_TYPE == 'INTER_LANCZOS4' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_lanczos_float_float, a, dH, dW, "f32_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.resize_lanczos_float_double, a, dH, dW, "f32_lanczos_double", interpolation=cv2.INTER_LANCZOS4)
+
+    if (INTER_TYPE == 'INTER_AREA' or INTER_TYPE == 'ALL'):
+        if S < 1:
+            run_benchmark(lib.resize_area_float_float, a, dH, dW, "f32_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_float_double, a, dH, dW, "f32_area_double", interpolation=cv2.INTER_AREA)
+        else:
+            run_benchmark(lib.resize_area_bilinear_float_float, a, dH, dW, "f32_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_bilinear_float_double, a, dH, dW, "f32_area_double", interpolation=cv2.INTER_AREA)
     
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
-    run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    if INTER_TYPE == 'INTER_LINEAR' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
+
+    if INTER_TYPE == 'INTER_NEAREST' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_uint8_t_float, a, dH, dW, "u8_nearest_float", interpolation=cv2.INTER_NEAREST)
+        run_benchmark(lib.resize_nearest_uint8_t_double, a, dH, dW, "u8_nearest_double", interpolation=cv2.INTER_NEAREST)
+
+    if INTER_TYPE == 'INTER_CUBIC' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bicubic_uint8_t_float, a, dH, dW, "u8_bicubic_float", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.resize_bicubic_uint8_t_double, a, dH, dW, "u8_bicubic_double", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.u8_resize_bicubic_uint8_t_float, a, dH, dW, "u8x_bicubic_float", interpolation=cv2.INTER_CUBIC)
+
+    if INTER_TYPE == 'INTER_LANCZOS4' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_lanczos_uint8_t_float, a, dH, dW, "u8_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.resize_lanczos_uint8_t_double, a, dH, dW, "u8_lanczos_double", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.u8_resize_lanczos_uint8_t_float, a, dH, dW, "u8x_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+
+    if (INTER_TYPE == 'INTER_AREA' or INTER_TYPE == 'ALL'):
+        if S < 1:
+            run_benchmark(lib.resize_area_uint8_t_float, a, dH, dW, "u8_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
+        else:
+            run_benchmark(lib.resize_area_bilinear_uint8_t_float, a, dH, dW, "u8_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_bilinear_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.u8_resize_area_bilinear_uint8_t_float, a, dH, dW, "u8x_area_float", interpolation=cv2.INTER_AREA)
 
     print("-" * 85)
     print(" " * 40 + f"dH={dH}, dW={dW}, ch=3")
 
     a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
 
-    run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
-    # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
-    # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
+    if INTER_TYPE == 'INTER_LINEAR' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_float_float, a, dH, dW, "f32_bilinear_float", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_float_double, a, dH, dW, "f32_bilinear_double", interpolation=cv2.INTER_LINEAR)
+        # run_benchmark(lib.resize_bilinear_2D_float_float, a, dH, dW, "f32_bilinear_2D_float", interpolation=cv2.INTER_LINEAR)
+        # run_benchmark(lib.resize_bilinear_2D_float_double, a, dH, dW, "f32_bilinear_2D_double", interpolation=cv2.INTER_LINEAR)
+        # # run_benchmark(lib.img_resize_2D_align_shared_float_float, a, dH, dW, "f32_align_shared_float")
+        # # run_benchmark(lib.img_resize_2D_align_shared_float_double, a, dH, dW, "f32_align_shared_double")
+
+    if INTER_TYPE == 'INTER_NEAREST' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_float_float, a, dH, dW, "f32_nearest_float", interpolation=cv2.INTER_NEAREST)
+        run_benchmark(lib.resize_nearest_float_double, a, dH, dW, "f32_nearest_double", interpolation=cv2.INTER_NEAREST)
+
+    if INTER_TYPE == 'INTER_CUBIC' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bicubic_float_float, a, dH, dW, "f32_bicubic_float", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.resize_bicubic_float_double, a, dH, dW, "f32_bicubic_double", interpolation=cv2.INTER_CUBIC)
+
+    if INTER_TYPE == 'INTER_LANCZOS4' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_lanczos_float_float, a, dH, dW, "f32_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.resize_lanczos_float_double, a, dH, dW, "f32_lanczos_double", interpolation=cv2.INTER_LANCZOS4)
+
+    if (INTER_TYPE == 'INTER_AREA' or INTER_TYPE == 'ALL'):
+        if S < 1:
+            run_benchmark(lib.resize_area_float_float, a, dH, dW, "f32_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_float_double, a, dH, dW, "f32_area_double", interpolation=cv2.INTER_AREA)
+        else:
+            run_benchmark(lib.resize_area_bilinear_float_float, a, dH, dW, "f32_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_bilinear_float_double, a, dH, dW, "f32_area_double", interpolation=cv2.INTER_AREA)
 
     a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
 
-    run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
-    run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
+    if INTER_TYPE == 'INTER_LINEAR' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_uint8_t_float, a, dH, dW, "u8_bilinear_float", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.resize_bilinear_uint8_t_double, a, dH, dW, "u8_bilinear_double", interpolation=cv2.INTER_LINEAR)
+        run_benchmark(lib.u8_resize_bilinear_uint8_t_float, a, dH, dW, "u8x_bilinear_float", interpolation=cv2.INTER_LINEAR)
+
+    if INTER_TYPE == 'INTER_NEAREST' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_uint8_t_float, a, dH, dW, "u8_nearest_float", interpolation=cv2.INTER_NEAREST)
+        run_benchmark(lib.resize_nearest_uint8_t_double, a, dH, dW, "u8_nearest_double", interpolation=cv2.INTER_NEAREST)
+
+    if INTER_TYPE == 'INTER_CUBIC' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bicubic_uint8_t_float, a, dH, dW, "u8_bicubic_float", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.resize_bicubic_uint8_t_double, a, dH, dW, "u8_bicubic_double", interpolation=cv2.INTER_CUBIC)
+        run_benchmark(lib.u8_resize_bicubic_uint8_t_float, a, dH, dW, "u8x_bicubic_float", interpolation=cv2.INTER_CUBIC)
+
+    if INTER_TYPE == 'INTER_LANCZOS4' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_lanczos_uint8_t_float, a, dH, dW, "u8_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.resize_lanczos_uint8_t_double, a, dH, dW, "u8_lanczos_double", interpolation=cv2.INTER_LANCZOS4)
+        run_benchmark(lib.u8_resize_lanczos_uint8_t_float, a, dH, dW, "u8x_lanczos_float", interpolation=cv2.INTER_LANCZOS4)
+
+    if (INTER_TYPE == 'INTER_AREA' or INTER_TYPE == 'ALL'):
+        if S < 1:
+            run_benchmark(lib.resize_area_uint8_t_float, a, dH, dW, "u8_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
+        else:
+            run_benchmark(lib.resize_area_bilinear_uint8_t_float, a, dH, dW, "u8_area_float", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.resize_area_bilinear_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
+            run_benchmark(lib.u8_resize_area_bilinear_uint8_t_float, a, dH, dW, "u8x_area_float", interpolation=cv2.INTER_AREA)
 
     print("-" * 85)
     
