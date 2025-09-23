@@ -56,6 +56,60 @@ __device__ __forceinline__ int reflect_101_no_branch(int coord, int size)
 }
 
 /**
+ * @brief 通用的多通道模糊核函数模板
+ * 支持任意数据类型和通道数的模糊处理
+ * 
+ * @tparam T 像素数据类型（如uint8_t, float等）
+ * @tparam CT 计算中间值类型（如int, float等，用于避免溢出）
+ * @tparam CH 图像通道数（1=灰度图，3=RGB，4=RGBA等）
+ * @param src 输入图像数据指针
+ * @param dst 输出图像数据指针  
+ * @param ks_h 卷积核高度
+ * @param ks_w 卷积核宽度
+ * @param img_h 图像高度
+ * @param img_w 图像宽度
+ * @param N 总像素数量（img_h * img_w）
+ */
+template<typename T, typename CT, int CH>
+__global__ void blur_kernel(T *src, T *dst, const int ks_h, const int ks_w, const int img_h, const int img_w,
+                            const int N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int    half_w = ks_w / 2;
+    const int    half_h = ks_h / 2;
+    const double count  = ks_h * ks_w;
+
+    // const int base = y * img_w * CH + x * CH;
+    const int base = idx * CH;
+
+// 处理每个通道
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        CT sum = 0;
+
+        // 遍历卷积核窗口
+        for (int ky = -half_h; ky <= half_h; ++ky)
+        {
+            int yy = reflect_101(y + ky, img_h);
+            for (int kx = -half_w; kx <= half_w; ++kx)
+            {
+                int xx = reflect_101(x + kx, img_w);
+                sum += src[(yy * img_w + xx) * CH + c];
+            }
+        }
+
+        dst[base + c] = saturate_cast<T>(sum / count);
+    }
+}
+
+/**
  * @brief 基础的2D模糊核函数
  * 使用全局内存访问，每个线程处理一个像素
  * 
@@ -707,6 +761,40 @@ void blur_u8_split_sw(torch::Tensor in, const int ksz, torch::Tensor out, torch:
                                              reinterpret_cast<uint8_t *>(out.data_ptr()), ksz, ksz, W, H);
 }
 
+#define TORCH_BINDING_BLUR_TEMPLATE(tag, th_type, element_type, cal_type, n_pack)                                      \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor dst, const int ksz)               \
+    {                                                                                                                  \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                 \
+        const int H  = src.size(0);                                                                                    \
+        const int W  = src.size(1);                                                                                    \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
+        const int N  = H * W;                                                                                          \
+        dim3      block(THREADS);                                                                                      \
+        dim3      grid(divUp(N, THREADS));                                                                             \
+        if (CH == 1)                                                                                                   \
+        {                                                                                                              \
+            tag##_kernel<element_type, cal_type, 1><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()), \
+                                                                     reinterpret_cast<element_type *>(dst.data_ptr()), \
+                                                                     ksz, ksz, H, W, N);                               \
+        }                                                                                                              \
+        else if (CH == 3)                                                                                              \
+        {                                                                                                              \
+            tag##_kernel<element_type, cal_type, 3><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()), \
+                                                                     reinterpret_cast<element_type *>(dst.data_ptr()), \
+                                                                     ksz, ksz, H, W, N);                               \
+        }                                                                                                              \
+        return dst;                                                                                                    \
+    }
+
+TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kFloat32, float, float, 1)
+TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kFloat32, float, double, 1)
+TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, float, 1)
+TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, int32_t, 1)
+
 /**
  * @brief Python绑定模块
  * 将所有CUDA函数绑定到Python接口
@@ -720,4 +808,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8_split_shared)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8_split_shared2)
     TORCH_BINDING_COMMON_EXTENSION(blur_u8_split_sw)
+
+    TORCH_BINDING_COMMON_EXTENSION(blur_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(blur_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_double)
+    TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_int32_t)
 }
