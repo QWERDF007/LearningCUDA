@@ -217,19 +217,17 @@ for H, W, ksz in Sizes:
 
     print(" " * 40 + f"H={H}, W={W}, ksz={ksz}, ch=3")
 
-    # 3通道float32测试
     a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
 
-    run_benchmark(lib.blur_float_float, a, ksz, "f32_3ch_blur_float", out)
-    run_benchmark(lib.blur_float_double, a, ksz, "f32_3ch_blur_double", out)
+    run_benchmark(lib.blur_float_float, a, ksz, "f32_blur_float", out)
+    run_benchmark(lib.blur_float_double, a, ksz, "f32_blur_double", out)
 
-    # 3通道uint8测试
     a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W, 3), dtype=torch.uint8).cuda().contiguous()
 
-    run_benchmark(lib.blur_uint8_t_float, a, ksz, "u8_3ch_blur_float", out)
-    run_benchmark(lib.blur_uint8_t_double, a, ksz, "u8_3ch_blur_double", out)
-    run_benchmark(lib.blur_uint8_t_int32_t, a, ksz, "u8_3ch_blur_int32", out)
+    run_benchmark(lib.blur_uint8_t_float, a, ksz, "u8_blur_float", out)
+    run_benchmark(lib.blur_uint8_t_double, a, ksz, "u8_blur_double", out)
+    run_benchmark(lib.blur_uint8_t_int32_t, a, ksz, "u8_blur_int32", out)
