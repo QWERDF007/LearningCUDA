@@ -226,6 +226,77 @@ __global__ void gaussian_blur_kernel(T *src, T *dst, WT *weights, const int ks_h
 }
 
 /**
+ * @brief 高斯模糊（可分离）- 水平一维卷积
+ * @tparam T 像素类型
+ * @tparam CT 计算类型
+ * @tparam WT 权重类型
+ * @tparam CH 通道数（1或3）
+ */
+template<typename T, typename CT, typename WT, int CH>
+__global__ void gaussian_blur_sep_h_kernel(T *src, float *tmp, WT *weights_x, const int ks_w, const int img_h,
+                                           const int img_w, const int N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    const int x      = idx % img_w;
+    const int y      = idx / img_w;
+    const int half_w = ks_w / 2;
+    const int base   = idx * CH;
+
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        CT sum = 0;
+        for (int kx = -half_w; kx <= half_w; ++kx)
+        {
+            int xx     = reflect_101(x + kx, img_w);
+            int w_x    = kx + half_w;
+            WT  weight = weights_x[w_x];
+            sum += weight * src[(y * img_w + xx) * CH + c];
+        }
+        // 写入中间结果；对整数类型会产生一次中间舍入/饱和
+        tmp[base + c] = saturate_cast<float>(sum);
+    }
+}
+
+/**
+ * @brief 高斯模糊（可分离）- 垂直一维卷积
+ * @tparam T 像素类型
+ * @tparam CT 计算类型
+ * @tparam WT 权重类型
+ * @tparam CH 通道数（1或3）
+ */
+template<typename T, typename CT, typename WT, int CH>
+__global__ void gaussian_blur_sep_v_kernel(float *tmp, T *dst, WT *weights_y, const int ks_h, const int img_h,
+                                           const int img_w, const int N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    const int x      = idx % img_w;
+    const int y      = idx / img_w;
+    const int half_h = ks_h / 2;
+    const int base   = idx * CH;
+
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        CT sum = 0;
+        for (int ky = -half_h; ky <= half_h; ++ky)
+        {
+            int yy     = reflect_101(y + ky, img_h);
+            int w_y    = ky + half_h;
+            WT  weight = weights_y[w_y];
+            sum += weight * tmp[(yy * img_w + x) * CH + c];
+        }
+        dst[base + c] = saturate_cast<T>(sum);
+    }
+}
+
+/**
  * @brief 高斯模糊绑定宏模板
  * 为不同数据类型创建高斯模糊函数的Python绑定
  * 
@@ -274,9 +345,57 @@ __global__ void gaussian_blur_kernel(T *src, T *dst, WT *weights, const int ks_h
         return dst;                                                                                                 \
     }
 
+// 分离版绑定：接受 X/Y 一维权重，先水平后垂直
+#define TORCH_BINDING_GAUSSIAN_BLUR_SEP(tag, th_type, element_type, cal_type, weight_type, n_pack)                   \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor tmp, torch::Tensor dst,         \
+                                                    torch::Tensor weights_x, torch::Tensor weights_y, const int ksh, \
+                                                    const int ksw)                                                   \
+    {                                                                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(weights_x)                                                                         \
+        CHECK_TORCH_TENSOR_DEVICE(weights_y)                                                                         \
+        const int H  = src.size(0);                                                                                  \
+        const int W  = src.size(1);                                                                                  \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
+        const int N  = H * W;                                                                                        \
+        dim3      block(THREADS);                                                                                    \
+        dim3      grid(divUp(N, THREADS));                                                                           \
+        if (CH == 1)                                                                                                 \
+        {                                                                                                            \
+            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),         \
+                reinterpret_cast<weight_type *>(weights_x.data_ptr()), ksw, H, W, N);                                \
+            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
+                reinterpret_cast<float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),         \
+                reinterpret_cast<weight_type *>(weights_y.data_ptr()), ksh, H, W, N);                                \
+        }                                                                                                            \
+        else if (CH == 3)                                                                                            \
+        {                                                                                                            \
+            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),         \
+                reinterpret_cast<weight_type *>(weights_x.data_ptr()), ksw, H, W, N);                                \
+            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
+                reinterpret_cast<float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),         \
+                reinterpret_cast<weight_type *>(weights_y.data_ptr()), ksh, H, W, N);                                \
+        }                                                                                                            \
+        return dst;                                                                                                  \
+    }
+
 // 生成不同数据类型的高斯模糊函数
 TORCH_BINDING_GAUSSIAN_BLUR(gaussian_blur, torch::kFloat32, float, float, float, 1)
 TORCH_BINDING_GAUSSIAN_BLUR(gaussian_blur, torch::kFloat32, float, double, float, 1)
+TORCH_BINDING_GAUSSIAN_BLUR(gaussian_blur, torch::kUInt8, uint8_t, float, float, 1)
+TORCH_BINDING_GAUSSIAN_BLUR(gaussian_blur, torch::kUInt8, uint8_t, double, float, 1)
+
+// 分离版函数
+TORCH_BINDING_GAUSSIAN_BLUR_SEP(gaussian_blur_sep, torch::kFloat32, float, float, float, 1)
+TORCH_BINDING_GAUSSIAN_BLUR_SEP(gaussian_blur_sep, torch::kFloat32, float, double, float, 1)
+TORCH_BINDING_GAUSSIAN_BLUR_SEP(gaussian_blur_sep, torch::kUInt8, uint8_t, float, float, 1)
+TORCH_BINDING_GAUSSIAN_BLUR_SEP(gaussian_blur_sep, torch::kUInt8, uint8_t, double, float, 1)
 
 /**
  * @brief Python绑定模块
@@ -287,4 +406,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     // 基础版本（每个线程计算权重）
     TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_float_float)
     TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_uint8_t_double)
+
+    // 分离版本（先水平后垂直）
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_sep_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_sep_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_sep_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(gaussian_blur_sep_uint8_t_double)
 }
