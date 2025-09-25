@@ -1,5 +1,6 @@
 
 import time
+import re
 from pathlib import Path
 from functools import partial
 from typing import Optional
@@ -8,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.cpp_extension import load
 
+import cv2
 import numpy as np
 
 # 禁用梯度计算，因为我们只进行推理，不需要反向传播
@@ -48,12 +50,14 @@ lib = load(
 def run_benchmark(
     perf_func: callable,                 # 要测试的函数，可调用对象
     a: torch.Tensor,                     # 输入张量
-    th: int,                             # 阈值
+    thresh,                              # 阈值
+    maxval,                              # 最大值
     tag: str,                            # 测试标签，用于输出识别
     out: Optional[torch.Tensor] = None,  # 可选的输出张量，如果提供则作为输出容器
     warmup: int = 20,                    # 预热次数，用于GPU预热和缓存优化
     iters: int = 1000,                   # 正式测试的迭代次数
     show_all: bool = False,              # 是否显示完整的输出张量
+    op: int = cv2.THRESH_BINARY,
 ):
     """
     性能基准测试函数
@@ -62,13 +66,8 @@ def run_benchmark(
     if out is not None:
         out.fill_(0)
     
-    # warmup
-    if out is not None:
-        for i in range(warmup):
-            perf_func(a, th, out)
-    else:
-        for i in range(warmup):
-            _ = perf_func(a, th)
+    for i in range(warmup):
+        perf_func(a, out, thresh, maxval)
     
     torch.cuda.synchronize()
     
@@ -76,11 +75,11 @@ def run_benchmark(
     
     if out is not None:
         for i in range(iters):
-            perf_func(a, th, out)
+            perf_func(a, out, thresh, maxval)
     else:
+        out = torch.zeros_like(a)
         for i in range(iters):
-            result = perf_func(a, th)
-        out = result  # 保存最后一次的结果用于后续分析
+            perf_func(a, out, thresh, maxval)
     
     torch.cuda.synchronize()
     
@@ -89,18 +88,84 @@ def run_benchmark(
     total_time = (end - start) * 1000  # 总时间，转换为毫秒
     mean_time = total_time / iters  # 平均每次迭代的时间
 
-    a_val = a.flatten().detach().cpu().numpy().tolist()[0]
-    out_val = out.flatten().detach().cpu().numpy().tolist()[0]
+    out_np = out.cpu().numpy()
+    _, expected = cv2.threshold(a.cpu().numpy(), thresh, maxval, op)
 
-    try:
-        np.testing.assert_array_equal((a.cpu().numpy() > th), (out.cpu().numpy() > th))
-        logic = True
-    except:
-        logic = False
+    # 精度检测逻辑 - 参照img_resize.py
+    decimal = 8
+    mismatch_info = ''
     
+    # 存储特定精度的不匹配百分比
+    mismatch_1e1 = '0%'  # 1e-1精度的不匹配百分比
+    mismatch_1e3 = '0%'  # 1e-3精度的不匹配百分比
+    mismatch_1e6 = '0%'  # 1e-6精度的不匹配百分比
+    passed_decimal = None  # 通过测试的前一个精度
+    max_abs_diff_all = 0  # 所有未通过测试中的最大绝对差异
+    
+    for i in range(12):
+        try:
+            np.testing.assert_array_almost_equal(out_np, expected, decimal)
+            if passed_decimal is None:
+                passed_decimal = decimal
+            break
+        except AssertionError as e:
+            msg = str(e)
+            
+            # 提取不匹配百分比
+            match = re.search(r"Mismatched elements:\s*(\d+)\s*/\s*(\d+)\s*\(([\d\.]+%)\)", msg)
+            percent_str = None
+            if match:
+                percent_str = match.group(3)
+            
+            # 提取最大绝对差异
+            match = re.search(r"Max absolute difference:\s*([0-9.eE+-]+)", msg)
+            if match:
+                max_abs_diff = float(match.group(1))
+                max_abs_diff_all = max(max_abs_diff_all, max_abs_diff)
+            
+            # 记录特定精度的不匹配百分比
+            if decimal == 3:  # 1e-3
+                mismatch_1e3 = percent_str if percent_str else "0%"
+            elif decimal == 6:  # 1e-6
+                mismatch_1e6 = percent_str if percent_str else "0%"
+            elif decimal == 1: # 1e-1
+                mismatch_1e1 = percent_str if percent_str else "0%"
+            
+            decimal -= 1
+    
+    # 如果在1e-3和1e-6之前就通过了测试，设置这两个精度的不匹配百分比为0
+    if passed_decimal is not None:
+        if passed_decimal > 3 and mismatch_1e3 is None:
+            mismatch_1e3 = "0%"
+        if passed_decimal > 6 and mismatch_1e6 is None:
+            mismatch_1e6 = "0%"
+        elif passed_decimal > 6 and mismatch_1e1 is None:
+            mismatch_1e1 = "0%"
+    
+    # 构建mismatch_info字符串
+    info_parts = []
+    if passed_decimal is not None:
+        sign = '-'
+        if passed_decimal <= 0:
+            passed_decimal = -passed_decimal
+            sign = ''
+        info_parts.append(f"passed: 1e{sign}{passed_decimal}")
+    if mismatch_1e1 is not None:
+        info_parts.append(f"1e-1: {mismatch_1e1}")
+    if mismatch_1e3 is not None:
+        info_parts.append(f"1e-3: {mismatch_1e3}")
+    if mismatch_1e6 is not None:
+        info_parts.append(f"1e-6: {mismatch_1e6}")
+    if max_abs_diff_all:
+        info_parts.append(f"max_diff: {max_abs_diff_all}")
+    mismatch_info = ", ".join(info_parts)
+
     out_info = f"out_{tag}" 
-    
-    print(f"{out_info:>18}: {a_val} > {th} = {out_val} ({logic}) iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    sign = '-'
+    if decimal <= 0:
+        decimal = -decimal
+        sign = ''
+    print(f"{out_info:>40}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)
@@ -111,42 +176,106 @@ def run_benchmark(
 Hs = [1024, 2048, 4096]
 # 定义测试用的张量宽度列表  
 Ws = [1024, 2048, 4096, 46000]
+OPs = ['THRESH_BINARY', 'THRESH_BINARY_INV', 'THRESH_TRUNC', 'THRESH_TOZERO', 'THRESH_TOZERO_INV']
 # 生成所有可能的(高度, 宽度)组合
-Sizes = [(H, W) for H in Hs for W in Ws]
+Sizes = [(H, W, op) for H in Hs for W in Ws for op in OPs]
 
-# 遍历所有尺寸组合进行性能测试
-for H, W in Sizes:
-    print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}")
+# 如果直接运行此脚本，则执行完整测试
+if __name__ == "__main__":
+    # 遍历所有尺寸组合进行性能测试
+    for H, W, op in Sizes:
+        print("-" * 85)
+        print(" " * 40 + f"H={H}, W={W}, ch=1, op={op}")
 
-    # 创建uint8类型的测试张量
-    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
-    out = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
-    
-    # 运行uint8类型的性能基准测试
-    run_benchmark(lib.threshold_u8, a, 128, "u8", out)
-    run_benchmark(lib.threshold_u8x4, a, 128, "u8x4", out)
-    run_benchmark(lib.threshold_u8x16_pack, a, 128, "u8x16_pack", out)
-    run_benchmark(lib.threshold_u8_2D, a, 128, "u8_2D", out)
-    run_benchmark(lib.threshold_u8x4_2D, a, 128, "u8x4_2D", out)
-    run_benchmark(lambda x, th: F.threshold(x, th, 0), a, 128, "u8_torch")
+        # 创建uint8类型的测试张量
+        a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+        out = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
-    print("-" * 85)
+        op_val = eval(f'cv2.{op}')
+        
+        # 运行uint8类型的基础性能基准测试（仅对THRESH_BINARY测试所有变种以避免重复）
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_u8, a, 128, 255, "u8", out, op=op_val)
+            run_benchmark(lib.threshold_u8x4, a, 128, 255, "u8x4", out, op=op_val)
+            run_benchmark(lib.threshold_u8x16_pack, a, 128, 255, "u8x16_pack", out, op=op_val)
+            run_benchmark(lib.threshold_u8_2D, a, 128, 255, "u8_2D", out, op=op_val)
+            run_benchmark(lib.threshold_u8x4_2D, a, 128, 255, "u8x4_2D", out, op=op_val)
+            run_benchmark(lambda x, _, th, maxval: F.threshold(x, th, maxval), a, 128, 255, "u8_torch", op=op_val)
+        
 
-    if W > 4096:
-        continue
+        # 测试threshold_binary系列函数 (uint8_t) - 根据op类型选择对应函数
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_binary_uint8_t, a, 128, 255, "u8_binary", out, op=op_val)
+        elif op_val == cv2.THRESH_BINARY_INV:
+            run_benchmark(lib.threshold_binary_inv_uint8_t, a, 128, 255, "u8_binary_inv", out, op=op_val)
+        elif op_val == cv2.THRESH_TRUNC:
+            run_benchmark(lib.threshold_trunc_uint8_t, a, 128, 255, "u8_trunc", out, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO:
+            run_benchmark(lib.threshold_tozero_uint8_t, a, 128, 255, "u8_tozero", out, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO_INV:
+            run_benchmark(lib.threshold_tozero_inv_uint8_t, a, 128, 255, "u8_tozero_inv", out, op=op_val)
+        
+        print(" " * 40 + f"H={H}, W={W}, ch=3, op={op}")
+        # 测试3通道图像 (uint8_t)
+        a_3ch = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
+        out_3ch = torch.zeros_like(a_3ch).cuda().contiguous()
+        
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_binary_uint8_t, a_3ch, 128, 255, "u8_binary", out_3ch, op=op_val)
+        elif op_val == cv2.THRESH_BINARY_INV:
+            run_benchmark(lib.threshold_binary_inv_uint8_t, a_3ch, 128, 255, "u8_binary_inv", out_3ch, op=op_val)
+        elif op_val == cv2.THRESH_TRUNC:
+            run_benchmark(lib.threshold_trunc_uint8_t, a_3ch, 128, 255, "u8_trunc", out_3ch, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO:
+            run_benchmark(lib.threshold_tozero_uint8_t, a_3ch, 128, 255, "u8_tozero", out_3ch, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO_INV:
+            run_benchmark(lib.threshold_tozero_inv_uint8_t, a_3ch, 128, 255, "u8_tozero_inv", out_3ch, op=op_val)
 
-    # 创建float32类型的测试张量
-    a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
-    out = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
+        print("-" * 85)
 
-    run_benchmark(lib.threshold_f32, a, 0.5, "f32", out)
-    run_benchmark(lib.threshold_f32_2D, a, 0.5, "f32_2D", out)
-    run_benchmark(lib.threshold_f32x4, a, 0.5, "f32x4", out)
-    run_benchmark(lib.threshold_f32x4_2D, a, 0.5, "f32x4_2D", out)
+        if W > 4096:
+            continue
 
-    print("-" * 85)
-    
-    
+        print(" " * 40 + f"H={H}, W={W}, ch=1, op={op}")
 
-    
+        # 创建float32类型的测试张量
+        a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
+        out = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
+
+        # 运行float32类型的基础性能基准测试（仅对THRESH_BINARY测试所有变种以避免重复）
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_f32, a, 0.5, 1.0, "f32", out, op=op_val)
+            run_benchmark(lib.threshold_f32_2D, a, 0.5, 1.0, "f32_2D", out, op=op_val)
+            run_benchmark(lib.threshold_f32x4, a, 0.5, 1.0, "f32x4", out, op=op_val)
+            run_benchmark(lib.threshold_f32x4_2D, a, 0.5, 1.0, "f32x4_2D", out, op=op_val)
+            run_benchmark(lambda x, _, th, maxval: F.threshold(x, th, maxval), a, 0.5, 1.0, "f32_torch", op=op_val)
+
+        # 测试threshold_binary系列函数 (float) - 根据op类型选择对应函数
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_binary_float, a, 0.5, 1.0, "f32_binary", out, op=op_val)
+        elif op_val == cv2.THRESH_BINARY_INV:
+            run_benchmark(lib.threshold_binary_inv_float, a, 0.5, 1.0, "f32_binary_inv", out, op=op_val)
+        elif op_val == cv2.THRESH_TRUNC:
+            run_benchmark(lib.threshold_trunc_float, a, 0.5, 1.0, "f32_trunc", out, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO:
+            run_benchmark(lib.threshold_tozero_float, a, 0.5, 1.0, "f32_tozero", out, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO_INV:
+            run_benchmark(lib.threshold_tozero_inv_float, a, 0.5, 1.0, "f32_tozero_inv", out, op=op_val)
+        
+        print(" " * 40 + f"H={H}, W={W}, ch=3, op={op}")
+        # 测试3通道图像 (float)
+        a_3ch_f32 = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
+        out_3ch_f32 = torch.zeros_like(a_3ch_f32).cuda().contiguous()
+        
+        if op_val == cv2.THRESH_BINARY:
+            run_benchmark(lib.threshold_binary_float, a_3ch_f32, 0.5, 1.0, "f32_binary", out_3ch_f32, op=op_val)
+        elif op_val == cv2.THRESH_BINARY_INV:
+            run_benchmark(lib.threshold_binary_inv_float, a_3ch_f32, 0.5, 1.0, "f32_binary_inv", out_3ch_f32, op=op_val)
+        elif op_val == cv2.THRESH_TRUNC:
+            run_benchmark(lib.threshold_trunc_float, a_3ch_f32, 0.5, 1.0, "f32_trunc", out_3ch_f32, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO:
+            run_benchmark(lib.threshold_tozero_float, a_3ch_f32, 0.5, 1.0, "f32_tozero", out_3ch_f32, op=op_val)
+        elif op_val == cv2.THRESH_TOZERO_INV:
+            run_benchmark(lib.threshold_tozero_inv_float, a_3ch_f32, 0.5, 1.0, "f32_tozero_inv", out_3ch_f32, op=op_val)
+
+        print("-" * 85)

@@ -166,12 +166,8 @@ def run_benchmark(
     total_time = (end - start) * 1000 
     mean_time = total_time / iters 
     
-    if 'cv' in tag:
-        expected = cv2.GaussianBlur(a, (ksz_w, ksz_h), sigmaX=sigma_x, sigmaY=sigma_y)
-        out_np = out
-    else:
-        expected = cv2.GaussianBlur(a.cpu().numpy(), (ksz_w, ksz_h), sigmaX=sigma_x, sigmaY=sigma_y)
-        out_np = out.cpu().numpy()
+    expected = cv2.GaussianBlur(a.cpu().numpy(), (ksz_w, ksz_h), sigmaX=sigma_x, sigmaY=sigma_y)
+    out_np = out.cpu().numpy()
     
     # 精度检测逻辑 - 参照img_resize.py
     decimal = 8
