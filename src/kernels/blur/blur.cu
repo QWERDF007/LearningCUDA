@@ -54,6 +54,71 @@ __global__ void blur_kernel(T *src, T *dst, const int ks_h, const int ks_w, cons
     }
 }
 
+template<typename T, typename CT, int CH>
+__global__ void blur_sep_h_kernel(T *in, CT *tmp, const int ks_w, const int img_w, const int img_h, const int N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int half_w = ks_w / 2;
+
+    const int base = idx * CH;
+
+// 处理每个通道
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        CT sum = 0;
+
+        // 水平方向卷积
+        for (int kx = -half_w; kx <= half_w; ++kx)
+        {
+            int xx = reflect_101_no_branch(x + kx, img_w);
+            sum += in[(y * img_w + xx) * CH + c];
+        }
+
+        // 存储原始和，不进行除法以避免精度损失
+        tmp[base + c] = sum;
+    }
+}
+
+template<typename T, typename CT, int CH>
+__global__ void blur_sep_v_kernel(CT *tmp, T *out, const int ks_w, const int ks_h, const int img_w, const int img_h,
+                                  const int N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int half_h = ks_h / 2;
+
+    const int base = idx * CH;
+
+// 处理每个通道
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        CT sum = 0;
+
+        // 垂直方向卷积
+        for (int ky = -half_h; ky <= half_h; ++ky)
+        {
+            int yy = reflect_101_no_branch(y + ky, img_h);
+            sum += tmp[(yy * img_w + x) * CH + c];
+        }
+
+        // 现在计算总平均值：sum是水平和的垂直和，需要除以 ks_w * ks_h
+        out[base + c] = saturate_cast<T>((float)sum / (ks_w * ks_h));
+    }
+}
+
 /**
  * @brief 基础的2D模糊核函数
  * 使用全局内存访问，每个线程处理一个像素
@@ -734,11 +799,54 @@ void blur_u8_split_sw(torch::Tensor in, const int ksz, torch::Tensor out, torch:
         return dst;                                                                                                    \
     }
 
+// 分离版本绑定宏：先水平后垂直，使用中间缓存
+#define TORCH_BINDING_BLUR_SEP_TEMPLATE(tag, th_type, element_type, cal_type, n_pack)                    \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, const int ksz, torch::Tensor dst, \
+                                                    torch::Tensor tmp)                                   \
+    {                                                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                         \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                         \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                   \
+        const int H  = src.size(0);                                                                      \
+        const int W  = src.size(1);                                                                      \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                 \
+        const int N  = H * W;                                                                            \
+        dim3      block(THREADS);                                                                        \
+        dim3      grid(divUp(N, THREADS));                                                               \
+        if (CH == 1)                                                                                     \
+        {                                                                                                \
+            blur_sep_h_kernel<element_type, cal_type, 1>                                                 \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),                      \
+                                  reinterpret_cast<cal_type *>(tmp.data_ptr()), ksz, W, H, N);           \
+            blur_sep_v_kernel<element_type, cal_type, 1>                                                 \
+                <<<grid, block>>>(reinterpret_cast<cal_type *>(tmp.data_ptr()),                          \
+                                  reinterpret_cast<element_type *>(dst.data_ptr()), ksz, ksz, W, H, N);  \
+        }                                                                                                \
+        else if (CH == 3)                                                                                \
+        {                                                                                                \
+            blur_sep_h_kernel<element_type, cal_type, 3>                                                 \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),                      \
+                                  reinterpret_cast<cal_type *>(tmp.data_ptr()), ksz, W, H, N);           \
+            blur_sep_v_kernel<element_type, cal_type, 3>                                                 \
+                <<<grid, block>>>(reinterpret_cast<cal_type *>(tmp.data_ptr()),                          \
+                                  reinterpret_cast<element_type *>(dst.data_ptr()), ksz, ksz, W, H, N);  \
+        }                                                                                                \
+        return dst;                                                                                      \
+    }
+
 TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kFloat32, float, float, 1)
 TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kFloat32, float, double, 1)
 TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, float, 1)
 TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, double, 1)
 TORCH_BINDING_BLUR_TEMPLATE(blur, torch::kUInt8, uint8_t, int32_t, 1)
+
+TORCH_BINDING_BLUR_SEP_TEMPLATE(blur_sep, torch::kFloat32, float, float, 1)
+TORCH_BINDING_BLUR_SEP_TEMPLATE(blur_sep, torch::kFloat32, float, double, 1)
+TORCH_BINDING_BLUR_SEP_TEMPLATE(blur_sep, torch::kUInt8, uint8_t, float, 1)
+TORCH_BINDING_BLUR_SEP_TEMPLATE(blur_sep, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_BLUR_SEP_TEMPLATE(blur_sep, torch::kUInt8, uint8_t, int32_t, 1)
 
 /**
  * @brief Python绑定模块
@@ -759,4 +867,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_float)
     TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_double)
     TORCH_BINDING_COMMON_EXTENSION(blur_uint8_t_int32_t)
+
+    // 分离版本绑定
+    TORCH_BINDING_COMMON_EXTENSION(blur_sep_float_float)
+    TORCH_BINDING_COMMON_EXTENSION(blur_sep_float_double)
+    TORCH_BINDING_COMMON_EXTENSION(blur_sep_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(blur_sep_uint8_t_double)
+    TORCH_BINDING_COMMON_EXTENSION(blur_sep_uint8_t_int32_t)
 }

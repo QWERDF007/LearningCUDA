@@ -67,6 +67,9 @@ def run_benchmark(
     elif 'split' in tag:
         for i in range(warmup):
             _ = perf_func(a, ksz, out, tmp)
+    elif 'sep' in tag:
+        for i in range(warmup):
+            _ = perf_func(a, ksz, out, tmp)
     else:
         for i in range(warmup):
             _ = perf_func(a, out, ksz)
@@ -79,6 +82,9 @@ def run_benchmark(
         for i in range(iters):
             out = perf_func(a, (ksz, ksz))
     elif 'split' in tag:
+        for i in range(iters):
+            perf_func(a, ksz, out, tmp)
+    elif 'sep' in tag:
         for i in range(iters):
             perf_func(a, ksz, out, tmp)
     else:
@@ -203,31 +209,51 @@ for H, W, ksz in Sizes:
     a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W), dtype=torch.float32).cuda().contiguous()
+    tmp_f32 = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
+    tmp_f64 = torch.zeros((H, W, 3), dtype=torch.float64).cuda().contiguous()
 
     run_benchmark(lib.blur_float_float, a, ksz, "f32_blur_float", out)
     run_benchmark(lib.blur_float_double, a, ksz, "f32_blur_double", out)
+    run_benchmark(lib.blur_sep_float_float, a, ksz, "f32_blur_sep_float", out, tmp_f32)
+    run_benchmark(lib.blur_sep_float_double, a, ksz, "f32_blur_sep_double", out, tmp_f64)
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp_f32 = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
+    tmp_f64 = torch.zeros((H, W, 3), dtype=torch.float64).cuda().contiguous()
+    tmp_int32 = torch.zeros((H, W, 3), dtype=torch.int32).cuda().contiguous()
 
     run_benchmark(lib.blur_uint8_t_float, a, ksz, "u8_blur_float", out)
     run_benchmark(lib.blur_uint8_t_double, a, ksz, "u8_blur_double", out)
     run_benchmark(lib.blur_uint8_t_int32_t, a, ksz, "u8_blur_int32", out)
+    run_benchmark(lib.blur_sep_uint8_t_float, a, ksz, "u8_blur_sep_float", out, tmp_f32)
+    run_benchmark(lib.blur_sep_uint8_t_double, a, ksz, "u8_blur_sep_double", out, tmp_f64)
+    run_benchmark(lib.blur_sep_uint8_t_int32_t, a, ksz, "u8_blur_sep_int32", out, tmp_int32)
 
     print(" " * 40 + f"H={H}, W={W}, ksz={ksz}, ch=3")
 
     a = torch.randn((H, W, 3), dtype=torch.float32).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
+    tmp_f32 = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
+    tmp_f64 = torch.zeros((H, W, 3), dtype=torch.float64).cuda().contiguous()
 
     run_benchmark(lib.blur_float_float, a, ksz, "f32_blur_float", out)
     run_benchmark(lib.blur_float_double, a, ksz, "f32_blur_double", out)
+    run_benchmark(lib.blur_sep_float_float, a, ksz, "f32_blur_sep_float", out, tmp_f32)
+    run_benchmark(lib.blur_sep_float_double, a, ksz, "f32_blur_sep_double", out, tmp_f64)
 
     a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
     a_np = a.cpu().numpy()
     out = torch.zeros((H, W, 3), dtype=torch.uint8).cuda().contiguous()
+    tmp_f32 = torch.zeros((H, W, 3), dtype=torch.float32).cuda().contiguous()
+    tmp_f64 = torch.zeros((H, W, 3), dtype=torch.float64).cuda().contiguous()
+    tmp_int32 = torch.zeros((H, W, 3), dtype=torch.int32).cuda().contiguous()
 
     run_benchmark(lib.blur_uint8_t_float, a, ksz, "u8_blur_float", out)
     run_benchmark(lib.blur_uint8_t_double, a, ksz, "u8_blur_double", out)
     run_benchmark(lib.blur_uint8_t_int32_t, a, ksz, "u8_blur_int32", out)
+    run_benchmark(lib.blur_sep_uint8_t_float, a, ksz, "u8_blur_sep_float", out, tmp_f32)
+    run_benchmark(lib.blur_sep_uint8_t_double, a, ksz, "u8_blur_sep_double", out, tmp_f64)
+    run_benchmark(lib.blur_sep_uint8_t_int32_t, a, ksz, "u8_blur_sep_int32", out, tmp_int32)
