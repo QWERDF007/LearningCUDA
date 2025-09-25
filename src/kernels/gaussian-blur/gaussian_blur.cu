@@ -8,7 +8,7 @@
  * @return 计算得到的sigma值
  */
 template<typename T>
-__device__ __host__ T get_gaussian_sigma(int kernel_size)
+__device__ __host__ T get_gaussian_sigma(const int kernel_size)
 {
     // OpenCV默认sigma计算公式：sigma = 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
     return static_cast<T>(0.3 * (static_cast<T>(kernel_size - 1) * 0.5 - 1) + 0.8);
@@ -26,7 +26,7 @@ __device__ __host__ T get_gaussian_sigma(int kernel_size)
  * @return 计算得到的2D高斯权重值
  */
 template<typename T>
-__device__ __forceinline__ T compute_gaussian_weight_2d(int dx, int dy, T sigma_x, T sigma_y)
+__device__ __forceinline__ T compute_gaussian_weight_2d(const int dx, const int dy, T sigma_x, T sigma_y)
 {
     T exp_x = static_cast<T>(dx * dx) / (static_cast<T>(2) * sigma_x * sigma_x);
     T exp_y = static_cast<T>(dy * dy) / (static_cast<T>(2) * sigma_y * sigma_y);
@@ -35,7 +35,8 @@ __device__ __forceinline__ T compute_gaussian_weight_2d(int dx, int dy, T sigma_
 
 // float特化版本，使用 __expf 以获得更好的性能
 template<>
-__device__ __forceinline__ float compute_gaussian_weight_2d<float>(int dx, int dy, float sigma_x, float sigma_y)
+__device__ __forceinline__ float compute_gaussian_weight_2d<float>(const int dx, const int dy, float sigma_x,
+                                                                   float sigma_y)
 {
     // float weight = expf(-(kx * kx) / (2.0f * sigma_x * sigma_x) - (ky * ky) / (2.0f * sigma_y * sigma_y));
     float exp_x = static_cast<float>(dx * dx) / (2.0f * sigma_x * sigma_x);
@@ -51,15 +52,16 @@ __device__ __forceinline__ float compute_gaussian_weight_2d<float>(int dx, int d
  * @param kernel_size 核大小（奇数）
  * @param sigma 高斯分布的标准差
  */
-__device__ void compute_gaussian_weights_1d(float *weights, int kernel_size, float sigma)
+template<typename T>
+__device__ void compute_gaussian_weights_1d(T *weights, const int kernel_size, const double sigma)
 {
-    int   half = kernel_size / 2;
-    float sum  = 0.0f;
+    int radius = kernel_size / 2;
+    T   sum    = 0.0f;
 
     // 计算高斯权重
     for (int i = 0; i < kernel_size; ++i)
     {
-        int x      = i - half;
+        int x      = i - radius;
         weights[i] = expf(-(x * x) / (2.0f * sigma * sigma));
         sum += weights[i];
     }
@@ -81,20 +83,23 @@ __device__ void compute_gaussian_weights_1d(float *weights, int kernel_size, flo
  * @param sigma_x 水平方向标准差
  * @param sigma_y 垂直方向标准差
  */
-__device__ void compute_gaussian_weights_2d(float *weights, int ks_h, int ks_w, float sigma_x, float sigma_y)
+template<typename T>
+__device__ void compute_gaussian_weights_2d(T *weights, const int ks_h, const int ks_w, const double sigma_x,
+                                            const double sigma_y)
 {
-    int   half_h = ks_h / 2;
-    int   half_w = ks_w / 2;
-    float sum    = 0.0f;
+    const int radius_h    = ks_h / 2;
+    const int radius_w    = ks_w / 2;
+    const int window_size = ks_h * ks_w;
+    T         sum         = 0;
 
     // 计算2D高斯权重
     for (int y = 0; y < ks_h; ++y)
     {
         for (int x = 0; x < ks_w; ++x)
         {
-            int   dy              = y - half_h;
-            int   dx              = x - half_w;
-            float weight          = compute_gaussian_weight_2d<float>(dx, dy, sigma_x, sigma_y);
+            int dy                = y - radius_h;
+            int dx                = x - radius_w;
+            T   weight            = compute_gaussian_weight_2d<T>(dx, dy, sigma_x, sigma_y);
             weights[y * ks_w + x] = weight;
             sum += weight;
         }
@@ -116,16 +121,16 @@ __device__ void compute_gaussian_weights_2d(float *weights, int ks_h, int ks_w, 
  * @tparam CH 图像通道数
  * @param src 输入图像数据指针
  * @param dst 输出图像数据指针
- * @param ks_h 卷积核高度
- * @param ks_w 卷积核宽度
+ * @param radius_h 卷积核半径（高度方向）
+ * @param radius_w 卷积核半径（宽度方向）
  * @param sigma_x 水平方向标准差
  * @param sigma_y 垂直方向标准差
  * @param img_h 图像高度
  * @param img_w 图像宽度
  * @param N 总像素数量
  */
-template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_dynamic_kernel(T *src, T *dst, WT *weights, const int ks_h, const int ks_w,
+template<typename T, typename CT, int CH>
+__global__ void gaussian_blur_dynamic_kernel(const T *src, T *dst, const int radius_h, const int radius_w,
                                              const double sigma_x, const double sigma_y, const int img_h,
                                              const int img_w, const int N)
 {
@@ -133,12 +138,9 @@ __global__ void gaussian_blur_dynamic_kernel(T *src, T *dst, WT *weights, const 
     if (idx >= N)
         return;
 
-    const int x = idx % img_w;
-    const int y = idx / img_w;
-
-    const int half_w = ks_w / 2;
-    const int half_h = ks_h / 2;
-    const int base   = idx * CH;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
+    const int base = idx * CH;
 
 // 处理每个通道
 #pragma unroll
@@ -148,15 +150,15 @@ __global__ void gaussian_blur_dynamic_kernel(T *src, T *dst, WT *weights, const 
         CT weight_sum = 0;
 
         // 遍历卷积核窗口，动态计算权重
-        for (int ky = -half_h; ky <= half_h; ++ky)
+        for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            int yy = reflect_101(y + ky, img_h);
-            for (int kx = -half_w; kx <= half_w; ++kx)
+            const int yy = reflect_101(y + ky, img_h);
+            for (int kx = -radius_w; kx <= radius_w; ++kx)
             {
-                int xx = reflect_101(x + kx, img_w);
+                const int xx = reflect_101(x + kx, img_w);
 
                 // 使用模板函数计算2D高斯权重
-                CT weight = compute_gaussian_weight_2d<CT>(kx, ky, sigma_x, sigma_y);
+                const CT weight = compute_gaussian_weight_2d<CT>(kx, ky, sigma_x, sigma_y);
 
                 sum += weight * src[(yy * img_w + xx) * CH + c];
                 weight_sum += weight;
@@ -178,26 +180,24 @@ __global__ void gaussian_blur_dynamic_kernel(T *src, T *dst, WT *weights, const 
  * @param src 输入图像数据指针
  * @param dst 输出图像数据指针  
  * @param weights 二维权重矩阵指针（按行优先存储）
- * @param ks_h 卷积核高度
- * @param ks_w 卷积核宽度
+ * @param radius_h 卷积核半径（高度方向）
+ * @param radius_w 卷积核半径（宽度方向）
+ * @param ks_w 卷积核宽度（用于权重索引计算）
  * @param img_h 图像高度
  * @param img_w 图像宽度
  * @param N 总像素数量（img_h * img_w）
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_kernel(T *src, T *dst, WT *weights, const int ks_h, const int ks_w, const double sigma_x,
-                                     const double sigma_y, const int img_h, const int img_w, const int N)
+__global__ void gaussian_blur_kernel(const T *src, T *dst, const WT *weights, const int radius_h, const int radius_w,
+                                     const int ks_w, const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x = idx % img_w;
-    const int y = idx / img_w;
-
-    const int half_w = ks_w / 2;
-    const int half_h = ks_h / 2;
-    const int base   = idx * CH;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
+    const int base = idx * CH;
 
 // 处理每个通道
 #pragma unroll
@@ -206,17 +206,17 @@ __global__ void gaussian_blur_kernel(T *src, T *dst, WT *weights, const int ks_h
         CT sum = 0;
 
         // 遍历卷积核窗口
-        for (int ky = -half_h; ky <= half_h; ++ky)
+        for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            int yy = reflect_101(y + ky, img_h);
-            for (int kx = -half_w; kx <= half_w; ++kx)
+            const int yy = reflect_101(y + ky, img_h);
+            for (int kx = -radius_w; kx <= radius_w; ++kx)
             {
-                int xx = reflect_101(x + kx, img_w);
+                const int xx = reflect_101(x + kx, img_w);
 
                 // 使用2D高斯权重
-                int weight_y = ky + half_h;
-                int weight_x = kx + half_w;
-                WT  weight   = weights[weight_y * ks_w + weight_x];
+                const int weight_y = ky + radius_h;
+                const int weight_x = kx + radius_w;
+                const WT  weight   = weights[weight_y * ks_w + weight_x];
                 sum += weight * src[(yy * img_w + xx) * CH + c];
             }
         }
@@ -231,29 +231,35 @@ __global__ void gaussian_blur_kernel(T *src, T *dst, WT *weights, const int ks_h
  * @tparam CT 计算类型
  * @tparam WT 权重类型
  * @tparam CH 通道数（1或3）
+ * @param src 输入图像数据指针
+ * @param tmp 临时结果缓存指针
+ * @param weights_x 水平方向一维权重数组指针
+ * @param radius_w 卷积核半径（宽度方向）
+ * @param img_h 图像高度
+ * @param img_w 图像宽度
+ * @param N 总像素数量
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_sep_h_kernel(T *src, float *tmp, WT *weights_x, const int ks_w, const int img_h,
-                                           const int img_w, const int N)
+__global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *weights_x, const int radius_w,
+                                           const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x      = idx % img_w;
-    const int y      = idx / img_w;
-    const int half_w = ks_w / 2;
-    const int base   = idx * CH;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
+    const int base = idx * CH;
 
 #pragma unroll
     for (int c = 0; c < CH; ++c)
     {
         CT sum = 0;
-        for (int kx = -half_w; kx <= half_w; ++kx)
+        for (int kx = -radius_w; kx <= radius_w; ++kx)
         {
-            int xx     = reflect_101(x + kx, img_w);
-            int w_x    = kx + half_w;
-            WT  weight = weights_x[w_x];
+            const int xx     = reflect_101(x + kx, img_w);
+            const int w_x    = kx + radius_w;
+            const WT  weight = weights_x[w_x];
             sum += weight * src[(y * img_w + xx) * CH + c];
         }
         // 写入中间结果；对整数类型会产生一次中间舍入/饱和
@@ -267,29 +273,35 @@ __global__ void gaussian_blur_sep_h_kernel(T *src, float *tmp, WT *weights_x, co
  * @tparam CT 计算类型
  * @tparam WT 权重类型
  * @tparam CH 通道数（1或3）
+ * @param tmp 中间结果缓存指针
+ * @param dst 输出图像数据指针
+ * @param weights_y 垂直方向一维权重数组指针
+ * @param radius_h 卷积核半径（高度方向）
+ * @param img_h 图像高度
+ * @param img_w 图像宽度
+ * @param N 总像素数量
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_sep_v_kernel(float *tmp, T *dst, WT *weights_y, const int ks_h, const int img_h,
-                                           const int img_w, const int N)
+__global__ void gaussian_blur_sep_v_kernel(const float *tmp, T *dst, const WT *weights_y, const int radius_h,
+                                           const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x      = idx % img_w;
-    const int y      = idx / img_w;
-    const int half_h = ks_h / 2;
-    const int base   = idx * CH;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
+    const int base = idx * CH;
 
 #pragma unroll
     for (int c = 0; c < CH; ++c)
     {
         CT sum = 0;
-        for (int ky = -half_h; ky <= half_h; ++ky)
+        for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            int yy     = reflect_101(y + ky, img_h);
-            int w_y    = ky + half_h;
-            WT  weight = weights_y[w_y];
+            const int yy     = reflect_101(y + ky, img_h);
+            const int w_y    = ky + radius_h;
+            const WT  weight = weights_y[w_y];
             sum += weight * tmp[(yy * img_w + x) * CH + c];
         }
         dst[base + c] = saturate_cast<T>(sum);
@@ -306,43 +318,47 @@ __global__ void gaussian_blur_sep_v_kernel(float *tmp, T *dst, WT *weights_y, co
  * @param cal_type 计算类型
  * @param n_pack 打包数量
  */
-#define TORCH_BINDING_GAUSSIAN_BLUR(tag, th_type, element_type, cal_type, weight_type, n_pack)                      \
-    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor dst, torch::Tensor weights,    \
-                                                    const int ksh, const int ksw, double sigma_x, double sigma_y)   \
-    {                                                                                                               \
-        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
-        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
-        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
-        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
-        CHECK_TORCH_TENSOR_DEVICE(weights)                                                                          \
-        const int H  = src.size(0);                                                                                 \
-        const int W  = src.size(1);                                                                                 \
-        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
-        const int N  = H * W;                                                                                       \
-        dim3      block(THREADS);                                                                                   \
-        dim3      grid(divUp(N, THREADS));                                                                          \
-        if (sigma_x == 0.0 && sigma_y == 0.0)                                                                       \
-        {                                                                                                           \
-            sigma_x = get_gaussian_sigma<double>(ksw);                                                              \
-            sigma_y = get_gaussian_sigma<double>(ksh);                                                              \
-        }                                                                                                           \
-        else if (sigma_y == 0.0)                                                                                    \
-        {                                                                                                           \
-            sigma_y = sigma_x;                                                                                      \
-        }                                                                                                           \
-        if (CH == 1)                                                                                                \
-        {                                                                                                           \
-            tag##_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                                  \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
-                reinterpret_cast<weight_type *>(weights.data_ptr()), ksh, ksw, sigma_x, sigma_y, H, W, N);          \
-        }                                                                                                           \
-        else if (CH == 3)                                                                                           \
-        {                                                                                                           \
-            tag##_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                                  \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
-                reinterpret_cast<weight_type *>(weights.data_ptr()), ksh, ksw, sigma_x, sigma_y, H, W, N);          \
-        }                                                                                                           \
-        return dst;                                                                                                 \
+#define TORCH_BINDING_GAUSSIAN_BLUR(tag, th_type, element_type, cal_type, weight_type, n_pack)                    \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor dst, torch::Tensor weights,  \
+                                                    const int ksh, const int ksw, double sigma_x, double sigma_y) \
+    {                                                                                                             \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                  \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                  \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                            \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                            \
+        CHECK_TORCH_TENSOR_DEVICE(weights)                                                                        \
+        const int H        = src.size(0);                                                                         \
+        const int W        = src.size(1);                                                                         \
+        const int CH       = src.dim() == 2 ? 1 : src.size(2);                                                    \
+        const int N        = H * W;                                                                               \
+        const int radius_h = ksh / 2;                                                                             \
+        const int radius_w = ksw / 2;                                                                             \
+        dim3      block(THREADS);                                                                                 \
+        dim3      grid(divUp(N, THREADS));                                                                        \
+        if (sigma_x == 0.0 && sigma_y == 0.0)                                                                     \
+        {                                                                                                         \
+            sigma_x = get_gaussian_sigma<double>(ksw);                                                            \
+            sigma_y = get_gaussian_sigma<double>(ksh);                                                            \
+        }                                                                                                         \
+        else if (sigma_y == 0.0)                                                                                  \
+        {                                                                                                         \
+            sigma_y = sigma_x;                                                                                    \
+        }                                                                                                         \
+        if (CH == 1)                                                                                              \
+        {                                                                                                         \
+            tag##_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                                \
+                reinterpret_cast<const element_type *>(src.data_ptr()),                                           \
+                reinterpret_cast<element_type *>(dst.data_ptr()),                                                 \
+                reinterpret_cast<const weight_type *>(weights.data_ptr()), radius_h, radius_w, ksw, H, W, N);     \
+        }                                                                                                         \
+        else if (CH == 3)                                                                                         \
+        {                                                                                                         \
+            tag##_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                                \
+                reinterpret_cast<const element_type *>(src.data_ptr()),                                           \
+                reinterpret_cast<element_type *>(dst.data_ptr()),                                                 \
+                reinterpret_cast<const weight_type *>(weights.data_ptr()), radius_h, radius_w, ksw, H, W, N);     \
+        }                                                                                                         \
+        return dst;                                                                                               \
     }
 
 // 分离版绑定：接受 X/Y 一维权重，先水平后垂直
@@ -358,29 +374,31 @@ __global__ void gaussian_blur_sep_v_kernel(float *tmp, T *dst, WT *weights_y, co
         CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
         CHECK_TORCH_TENSOR_DEVICE(weights_x)                                                                         \
         CHECK_TORCH_TENSOR_DEVICE(weights_y)                                                                         \
-        const int H  = src.size(0);                                                                                  \
-        const int W  = src.size(1);                                                                                  \
-        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
-        const int N  = H * W;                                                                                        \
+        const int H        = src.size(0);                                                                            \
+        const int W        = src.size(1);                                                                            \
+        const int CH       = src.dim() == 2 ? 1 : src.size(2);                                                       \
+        const int N        = H * W;                                                                                  \
+        const int radius_h = ksh / 2;                                                                                \
+        const int radius_w = ksw / 2;                                                                                \
         dim3      block(THREADS);                                                                                    \
         dim3      grid(divUp(N, THREADS));                                                                           \
         if (CH == 1)                                                                                                 \
         {                                                                                                            \
             gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),         \
-                reinterpret_cast<weight_type *>(weights_x.data_ptr()), ksw, H, W, N);                                \
+                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),   \
+                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), radius_w, H, W, N);                     \
             gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
-                reinterpret_cast<float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),         \
-                reinterpret_cast<weight_type *>(weights_y.data_ptr()), ksh, H, W, N);                                \
+                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
+                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), radius_h, H, W, N);                     \
         }                                                                                                            \
         else if (CH == 3)                                                                                            \
         {                                                                                                            \
             gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),         \
-                reinterpret_cast<weight_type *>(weights_x.data_ptr()), ksw, H, W, N);                                \
+                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),   \
+                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), radius_w, H, W, N);                     \
             gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
-                reinterpret_cast<float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),         \
-                reinterpret_cast<weight_type *>(weights_y.data_ptr()), ksh, H, W, N);                                \
+                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
+                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), radius_h, H, W, N);                     \
         }                                                                                                            \
         return dst;                                                                                                  \
     }
