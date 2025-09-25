@@ -272,8 +272,7 @@ __global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *w
             const WT  weight = weights_x[w_x];
             sum += weight * src[(y * img_w + xx) * CH + c];
         }
-        // 写入中间结果；对整数类型会产生一次中间舍入/饱和
-        tmp[base + c] = saturate_cast<float>(sum);
+        tmp[base + c] = sum;
     }
 }
 
