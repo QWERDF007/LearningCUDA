@@ -130,16 +130,19 @@ __device__ void compute_gaussian_weights_2d(T *weights, const int ks_h, const in
  * @param N 总像素数量
  */
 template<typename T, typename CT, int CH>
-__global__ void gaussian_blur_dynamic_kernel(const T *src, T *dst, const int radius_h, const int radius_w,
-                                             const double sigma_x, const double sigma_y, const int img_h,
-                                             const int img_w, const int N)
+__global__ void gaussian_blur_dynamic_kernel(const T *src, T *dst, const int ks_h, const int ks_w, const double sigma_x,
+                                             const double sigma_y, const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x    = idx % img_w;
-    const int y    = idx / img_w;
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int radius_h = ks_h / 2;
+    const int radius_w = ks_w / 2;
+
     const int base = idx * CH;
 
 // 处理每个通道
@@ -188,15 +191,19 @@ __global__ void gaussian_blur_dynamic_kernel(const T *src, T *dst, const int rad
  * @param N 总像素数量（img_h * img_w）
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_kernel(const T *src, T *dst, const WT *weights, const int radius_h, const int radius_w,
-                                     const int ks_w, const int img_h, const int img_w, const int N)
+__global__ void gaussian_blur_kernel(const T *src, T *dst, const WT *weights, const int ks_h, const int ks_w,
+                                     const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x    = idx % img_w;
-    const int y    = idx / img_w;
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int radius_h = ks_h / 2;
+    const int radius_w = ks_w / 2;
+
     const int base = idx * CH;
 
 // 处理每个通道
@@ -240,15 +247,18 @@ __global__ void gaussian_blur_kernel(const T *src, T *dst, const WT *weights, co
  * @param N 总像素数量
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *weights_x, const int radius_w,
+__global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *weights_x, const int ks_w,
                                            const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x    = idx % img_w;
-    const int y    = idx / img_w;
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int radius_w = ks_w / 2;
+
     const int base = idx * CH;
 
 #pragma unroll
@@ -282,15 +292,18 @@ __global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *w
  * @param N 总像素数量
  */
 template<typename T, typename CT, typename WT, int CH>
-__global__ void gaussian_blur_sep_v_kernel(const float *tmp, T *dst, const WT *weights_y, const int radius_h,
+__global__ void gaussian_blur_sep_v_kernel(const float *tmp, T *dst, const WT *weights_y, const int ks_h,
                                            const int img_h, const int img_w, const int N)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
 
-    const int x    = idx % img_w;
-    const int y    = idx / img_w;
+    const int x = idx % img_w;
+    const int y = idx / img_w;
+
+    const int radius_h = ks_h / 2;
+
     const int base = idx * CH;
 
 #pragma unroll
@@ -318,89 +331,85 @@ __global__ void gaussian_blur_sep_v_kernel(const float *tmp, T *dst, const WT *w
  * @param cal_type 计算类型
  * @param n_pack 打包数量
  */
-#define TORCH_BINDING_GAUSSIAN_BLUR(tag, th_type, element_type, cal_type, weight_type, n_pack)                    \
-    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor dst, torch::Tensor weights,  \
-                                                    const int ksh, const int ksw, double sigma_x, double sigma_y) \
-    {                                                                                                             \
-        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                  \
-        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                  \
-        CHECK_TORCH_TENSOR_DEVICE(src)                                                                            \
-        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                            \
-        CHECK_TORCH_TENSOR_DEVICE(weights)                                                                        \
-        const int H        = src.size(0);                                                                         \
-        const int W        = src.size(1);                                                                         \
-        const int CH       = src.dim() == 2 ? 1 : src.size(2);                                                    \
-        const int N        = H * W;                                                                               \
-        const int radius_h = ksh / 2;                                                                             \
-        const int radius_w = ksw / 2;                                                                             \
-        dim3      block(THREADS);                                                                                 \
-        dim3      grid(divUp(N, THREADS));                                                                        \
-        if (sigma_x == 0.0 && sigma_y == 0.0)                                                                     \
-        {                                                                                                         \
-            sigma_x = get_gaussian_sigma<double>(ksw);                                                            \
-            sigma_y = get_gaussian_sigma<double>(ksh);                                                            \
-        }                                                                                                         \
-        else if (sigma_y == 0.0)                                                                                  \
-        {                                                                                                         \
-            sigma_y = sigma_x;                                                                                    \
-        }                                                                                                         \
-        if (CH == 1)                                                                                              \
-        {                                                                                                         \
-            tag##_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                                \
-                reinterpret_cast<const element_type *>(src.data_ptr()),                                           \
-                reinterpret_cast<element_type *>(dst.data_ptr()),                                                 \
-                reinterpret_cast<const weight_type *>(weights.data_ptr()), radius_h, radius_w, ksw, H, W, N);     \
-        }                                                                                                         \
-        else if (CH == 3)                                                                                         \
-        {                                                                                                         \
-            tag##_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                                \
-                reinterpret_cast<const element_type *>(src.data_ptr()),                                           \
-                reinterpret_cast<element_type *>(dst.data_ptr()),                                                 \
-                reinterpret_cast<const weight_type *>(weights.data_ptr()), radius_h, radius_w, ksw, H, W, N);     \
-        }                                                                                                         \
-        return dst;                                                                                               \
+#define TORCH_BINDING_GAUSSIAN_BLUR(tag, th_type, element_type, cal_type, weight_type, n_pack)                      \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor dst, torch::Tensor weights,    \
+                                                    const int ks_h, const int ks_w, double sigma_x, double sigma_y) \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(weights)                                                                          \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        if (sigma_x == 0.0 && sigma_y == 0.0)                                                                       \
+        {                                                                                                           \
+            sigma_x = get_gaussian_sigma<double>(ks_w);                                                             \
+            sigma_y = get_gaussian_sigma<double>(ks_h);                                                             \
+        }                                                                                                           \
+        else if (sigma_y == 0.0)                                                                                    \
+        {                                                                                                           \
+            sigma_y = sigma_x;                                                                                      \
+        }                                                                                                           \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            tag##_kernel<element_type, cal_type, weight_type, 1>                                                    \
+                <<<grid, block>>>(reinterpret_cast<const element_type *>(src.data_ptr()),                           \
+                                  reinterpret_cast<element_type *>(dst.data_ptr()),                                 \
+                                  reinterpret_cast<const weight_type *>(weights.data_ptr()), ks_h, ks_w, H, W, N);  \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            tag##_kernel<element_type, cal_type, weight_type, 3>                                                    \
+                <<<grid, block>>>(reinterpret_cast<const element_type *>(src.data_ptr()),                           \
+                                  reinterpret_cast<element_type *>(dst.data_ptr()),                                 \
+                                  reinterpret_cast<const weight_type *>(weights.data_ptr()), ks_h, ks_w, H, W, N);  \
+        }                                                                                                           \
+        return dst;                                                                                                 \
     }
 
 // 分离版绑定：接受 X/Y 一维权重，先水平后垂直
-#define TORCH_BINDING_GAUSSIAN_BLUR_SEP(tag, th_type, element_type, cal_type, weight_type, n_pack)                   \
-    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor tmp, torch::Tensor dst,         \
-                                                    torch::Tensor weights_x, torch::Tensor weights_y, const int ksh, \
-                                                    const int ksw)                                                   \
-    {                                                                                                                \
-        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
-        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
-        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
-        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
-        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
-        CHECK_TORCH_TENSOR_DEVICE(weights_x)                                                                         \
-        CHECK_TORCH_TENSOR_DEVICE(weights_y)                                                                         \
-        const int H        = src.size(0);                                                                            \
-        const int W        = src.size(1);                                                                            \
-        const int CH       = src.dim() == 2 ? 1 : src.size(2);                                                       \
-        const int N        = H * W;                                                                                  \
-        const int radius_h = ksh / 2;                                                                                \
-        const int radius_w = ksw / 2;                                                                                \
-        dim3      block(THREADS);                                                                                    \
-        dim3      grid(divUp(N, THREADS));                                                                           \
-        if (CH == 1)                                                                                                 \
-        {                                                                                                            \
-            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
-                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),   \
-                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), radius_w, H, W, N);                     \
-            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                     \
-                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
-                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), radius_h, H, W, N);                     \
-        }                                                                                                            \
-        else if (CH == 3)                                                                                            \
-        {                                                                                                            \
-            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
-                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),   \
-                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), radius_w, H, W, N);                     \
-            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                     \
-                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
-                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), radius_h, H, W, N);                     \
-        }                                                                                                            \
-        return dst;                                                                                                  \
+#define TORCH_BINDING_GAUSSIAN_BLUR_SEP(tag, th_type, element_type, cal_type, weight_type, n_pack)                    \
+    torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, torch::Tensor tmp, torch::Tensor dst,          \
+                                                    torch::Tensor weights_x, torch::Tensor weights_y, const int ks_h, \
+                                                    const int ks_w)                                                   \
+    {                                                                                                                 \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                      \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(weights_x)                                                                          \
+        CHECK_TORCH_TENSOR_DEVICE(weights_y)                                                                          \
+        const int H  = src.size(0);                                                                                   \
+        const int W  = src.size(1);                                                                                   \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                              \
+        const int N  = H * W;                                                                                         \
+        dim3      block(THREADS);                                                                                     \
+        dim3      grid(divUp(N, THREADS));                                                                            \
+        if (CH == 1)                                                                                                  \
+        {                                                                                                             \
+            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                      \
+                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),    \
+                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), ks_w, H, W, N);                          \
+            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 1><<<grid, block>>>(                      \
+                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),    \
+                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), ks_h, H, W, N);                          \
+        }                                                                                                             \
+        else if (CH == 3)                                                                                             \
+        {                                                                                                             \
+            gaussian_blur_sep_h_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                      \
+                reinterpret_cast<const element_type *>(src.data_ptr()), reinterpret_cast<float *>(tmp.data_ptr()),    \
+                reinterpret_cast<const weight_type *>(weights_x.data_ptr()), ks_w, H, W, N);                          \
+            gaussian_blur_sep_v_kernel<element_type, cal_type, weight_type, 3><<<grid, block>>>(                      \
+                reinterpret_cast<const float *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),    \
+                reinterpret_cast<const weight_type *>(weights_y.data_ptr()), ks_h, H, W, N);                          \
+        }                                                                                                             \
+        return dst;                                                                                                   \
     }
 
 // 生成不同数据类型的高斯模糊函数
