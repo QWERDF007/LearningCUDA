@@ -108,7 +108,6 @@ def run_benchmark(
     # 精度检测逻辑 - 参照img_resize.py
     decimal = 8
     mismatch_info = ''
-    ok = False
     
     # 存储特定精度的不匹配百分比
     mismatch_1e1 = '0%'  # 1e-1精度的不匹配百分比
@@ -120,7 +119,6 @@ def run_benchmark(
     for i in range(12):
         try:
             np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            ok = True
             if passed_decimal is None:
                 passed_decimal = decimal
             break

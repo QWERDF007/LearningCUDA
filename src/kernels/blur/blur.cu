@@ -42,10 +42,10 @@ __global__ void blur_kernel(T *src, T *dst, const int ks_h, const int ks_w, cons
         // 遍历卷积核窗口
         for (int ky = -half_h; ky <= half_h; ++ky)
         {
-            int yy = reflect_101(y + ky, img_h);
+            int yy = border_reflect_101(y + ky, img_h);
             for (int kx = -half_w; kx <= half_w; ++kx)
             {
-                int xx = reflect_101(x + kx, img_w);
+                int xx = border_reflect_101(x + kx, img_w);
                 sum += src[(yy * img_w + xx) * CH + c];
             }
         }
@@ -77,7 +77,7 @@ __global__ void blur_sep_h_kernel(T *in, CT *tmp, const int ks_w, const int img_
         // 水平方向卷积
         for (int kx = -half_w; kx <= half_w; ++kx)
         {
-            int xx = reflect_101_no_branch(x + kx, img_w);
+            int xx = border_reflect_101_no_branch(x + kx, img_w);
             sum += in[(y * img_w + xx) * CH + c];
         }
 
@@ -110,7 +110,7 @@ __global__ void blur_sep_v_kernel(CT *tmp, T *out, const int ks_w, const int ks_
         // 垂直方向卷积
         for (int ky = -half_h; ky <= half_h; ++ky)
         {
-            int yy = reflect_101_no_branch(y + ky, img_h);
+            int yy = border_reflect_101_no_branch(y + ky, img_h);
             sum += tmp[(yy * img_w + x) * CH + c];
         }
 
@@ -151,10 +151,10 @@ __global__ void blur_u8_kernel(uint8_t *in, uint8_t *out, const int ks_w, const 
     // 遍历卷积核窗口
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
-        int yy = reflect_101(y + ky, img_h); // 使用BORDER_REFLECT_101
+        int yy = border_reflect_101(y + ky, img_h); // 使用BORDER_REFLECT_101
         for (int kx = -half_w; kx <= half_w; ++kx)
         {
-            int xx = reflect_101(x + kx, img_w);
+            int xx = border_reflect_101(x + kx, img_w);
             sum += in[yy * img_w + xx];
         }
     }
@@ -192,10 +192,10 @@ __global__ void blur_u8_nb_kernel(uint8_t *in, uint8_t *out, const int ks_w, con
     // 使用无分支版本的边界处理函数
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
-        int yy = reflect_101_no_branch(y + ky, img_h);
+        int yy = border_reflect_101_no_branch(y + ky, img_h);
         for (int kx = -half_w; kx <= half_w; ++kx)
         {
-            int xx = reflect_101_no_branch(x + kx, img_w);
+            int xx = border_reflect_101_no_branch(x + kx, img_w);
             sum += in[yy * img_w + xx];
         }
     }
@@ -248,8 +248,8 @@ __global__ void blur_u8_kernel_shared(uint8_t *in, uint8_t *out, const int ks_w,
         int global_y = blockIdx.y * blockDim.y + smem_y - half_h;
 
         // 边界反射处理
-        global_x = reflect_101_no_branch(global_x, img_w);
-        global_y = reflect_101_no_branch(global_y, img_h);
+        global_x = border_reflect_101_no_branch(global_x, img_w);
+        global_y = border_reflect_101_no_branch(global_y, img_h);
 
         // 存储到共享内存
         smem[smem_y * smem_w + smem_x] = in[global_y * img_w + global_x];
@@ -304,7 +304,7 @@ __global__ void blur_u8_h_kernel(uint8_t *in, int32_t *tmp, int ks_w, int img_w,
     // 水平方向卷积
     for (int kx = -half_w; kx <= half_w; ++kx)
     {
-        int xx = reflect_101_no_branch(x + kx, img_w);
+        int xx = border_reflect_101_no_branch(x + kx, img_w);
         sum += in[y * img_w + xx];
     }
 
@@ -337,7 +337,7 @@ __global__ void blur_u8_v_kernel(int32_t *tmp, uint8_t *out, int ks_w, int ks_h,
     // 垂直方向卷积
     for (int ky = -half_h; ky <= half_h; ++ky)
     {
-        int yy = reflect_101_no_branch(y + ky, img_h);
+        int yy = border_reflect_101_no_branch(y + ky, img_h);
         sum += tmp[yy * img_w + x];
     }
 
@@ -376,7 +376,7 @@ __global__ void blur_u8_h_shared_kernel(uint8_t *in, int32_t *tmp, int ks_w, int
     for (int k = tx; k < tile_w; k += blockDim.x)
     {
         int gx  = blockIdx.x * blockDim.x + k - half_w;
-        gx      = reflect_101_no_branch(gx, img_w);
+        gx      = border_reflect_101_no_branch(gx, img_w);
         smem[k] = in[y * img_w + gx];
     }
     __syncthreads();
@@ -423,7 +423,7 @@ __global__ void blur_u8_v_shared_kernel(int32_t *tmp, uint8_t *out, int ks_w, in
     for (int k = ty; k < tile_h; k += blockDim.y)
     {
         int gy                     = blockIdx.y * blockDim.y + k - half_h;
-        gy                         = reflect_101_no_branch(gy, img_h);
+        gy                         = border_reflect_101_no_branch(gy, img_h);
         smem2[k * blockDim.x + tx] = tmp[gy * img_w + x];
     }
     __syncthreads();
@@ -470,7 +470,7 @@ __global__ void blur_u8_v_shared_column_kernel(int32_t *tmp, uint8_t *out, int k
     for (int k = ty; k < tile_h; k += blockDim.y)
     {
         int gy   = blockIdx.y * blockDim.y + k - half_h;
-        gy       = reflect_101_no_branch(gy, img_h);
+        gy       = border_reflect_101_no_branch(gy, img_h);
         smem2[k] = tmp[gy * img_w + x];
     }
     __syncthreads();
@@ -508,7 +508,7 @@ __global__ void blur_u8_h_sw_kernel(const uint8_t *__restrict__ in, int32_t *__r
     int sum = 0;
     for (int k = -half; k <= half; ++k)
     {
-        int xx = reflect_101_no_branch(k, img_w);
+        int xx = border_reflect_101_no_branch(k, img_w);
         sum += in[y * img_w + xx];
     }
     tmp[y * img_w + 0] = sum;
@@ -516,8 +516,8 @@ __global__ void blur_u8_h_sw_kernel(const uint8_t *__restrict__ in, int32_t *__r
     // 递推：x 从 1 到 img_w-1
     for (int x = 1; x < img_w; ++x)
     {
-        int prev = reflect_101_no_branch(x - half - 1, img_w); // 移出
-        int next = reflect_101_no_branch(x + half, img_w);     // 移入
+        int prev = border_reflect_101_no_branch(x - half - 1, img_w); // 移出
+        int next = border_reflect_101_no_branch(x + half, img_w);     // 移入
         sum += (int)in[y * img_w + next] - (int)in[y * img_w + prev];
         tmp[y * img_w + x] = sum;
     }
@@ -548,7 +548,7 @@ __global__ void blur_u8_v_sw_kernel(const int32_t *__restrict__ tmp, uint8_t *__
     int sum = 0;
     for (int k = -half; k <= half; ++k)
     {
-        int yy = reflect_101_no_branch(k, img_h);
+        int yy = border_reflect_101_no_branch(k, img_h);
         sum += tmp[yy * img_w + x];
     }
     out[0 * img_w + x] = (uint8_t)((sum + area / 2) / area);
@@ -556,9 +556,9 @@ __global__ void blur_u8_v_sw_kernel(const int32_t *__restrict__ tmp, uint8_t *__
     // 递推：y 从 1 到 img_h-1
     for (int y = 1; y < img_h; ++y)
     {
-        int prev = reflect_101_no_branch(y - half - 1, img_h); // 移出
-        int next = reflect_101_no_branch(y + half, img_h);     // 移入
-        sum += tmp[next * img_w + x] - tmp[prev * img_w + x];  // 注意：用的是"上一 y 的 sum"来递推
+        int prev = border_reflect_101_no_branch(y - half - 1, img_h); // 移出
+        int next = border_reflect_101_no_branch(y + half, img_h);     // 移入
+        sum += tmp[next * img_w + x] - tmp[prev * img_w + x];         // 注意：用的是"上一 y 的 sum"来递推
         out[y * img_w + x] = (uint8_t)((sum + area / 2) / area);
     }
 }

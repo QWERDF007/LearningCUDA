@@ -155,10 +155,10 @@ __global__ void gaussian_blur_dynamic_kernel(const T *src, T *dst, const int ks_
         // 遍历卷积核窗口，动态计算权重
         for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            const int yy = reflect_101(y + ky, img_h);
+            const int yy = border_reflect_101(y + ky, img_h);
             for (int kx = -radius_w; kx <= radius_w; ++kx)
             {
-                const int xx = reflect_101(x + kx, img_w);
+                const int xx = border_reflect_101(x + kx, img_w);
 
                 // 使用模板函数计算2D高斯权重
                 const CT weight = compute_gaussian_weight_2d<CT>(kx, ky, sigma_x, sigma_y);
@@ -215,10 +215,10 @@ __global__ void gaussian_blur_kernel(const T *src, T *dst, const WT *weights, co
         // 遍历卷积核窗口
         for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            const int yy = reflect_101(y + ky, img_h);
+            const int yy = border_reflect_101(y + ky, img_h);
             for (int kx = -radius_w; kx <= radius_w; ++kx)
             {
-                const int xx = reflect_101(x + kx, img_w);
+                const int xx = border_reflect_101(x + kx, img_w);
 
                 // 使用2D高斯权重
                 const int weight_y = ky + radius_h;
@@ -267,7 +267,7 @@ __global__ void gaussian_blur_sep_h_kernel(const T *src, float *tmp, const WT *w
         CT sum = 0;
         for (int kx = -radius_w; kx <= radius_w; ++kx)
         {
-            const int xx     = reflect_101(x + kx, img_w);
+            const int xx     = border_reflect_101(x + kx, img_w);
             const int w_x    = kx + radius_w;
             const WT  weight = weights_x[w_x];
             sum += weight * src[(y * img_w + xx) * CH + c];
@@ -311,7 +311,7 @@ __global__ void gaussian_blur_sep_v_kernel(const float *tmp, T *dst, const WT *w
         CT sum = 0;
         for (int ky = -radius_h; ky <= radius_h; ++ky)
         {
-            const int yy     = reflect_101(y + ky, img_h);
+            const int yy     = border_reflect_101(y + ky, img_h);
             const int w_y    = ky + radius_h;
             const WT  weight = weights_y[w_y];
             sum += weight * tmp[(yy * img_w + x) * CH + c];
