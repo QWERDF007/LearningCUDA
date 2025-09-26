@@ -24,7 +24,7 @@ def get_gaussian_sigma(kernel_size):
     """
     return 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
 
-def compute_gaussian_kernel_opencv(kernel_size, sigma=None, ktype=6):
+def compute_gaussian_kernel_opencv(kernel_size, sigma=None, ktype=6, norm=False):
     """
     使用OpenCV计算高斯核并转换为PyTorch Tensor
     
@@ -53,9 +53,16 @@ def compute_gaussian_kernel_opencv(kernel_size, sigma=None, ktype=6):
     # 使用OpenCV的getGaussianKernel函数计算一维高斯核
     kernel_1d_x = cv2.getGaussianKernel(ksize_x, sigma_x, ktype=ktype)
     kernel_1d_y = cv2.getGaussianKernel(ksize_y, sigma_y, ktype=ktype)
-    
+
     # 计算2D高斯核：外积
-    kernel_2d = np.outer(kernel_1d_y, kernel_1d_x)
+    if not norm:
+        kernel_2d = np.outer(kernel_1d_y, kernel_1d_x)
+    else:
+        kernel_1d_x_norm = np.round(kernel_1d_x / kernel_1d_x[0])
+        kernel_1d_y_norm = np.round(kernel_1d_y / kernel_1d_y[0])
+        
+        kernel_2d_norm = np.outer(kernel_1d_x_norm, kernel_1d_y_norm)
+        kernel_2d = kernel_2d_norm / np.sum(kernel_2d_norm)
     
     # 转换为PyTorch Tensor并移动到GPU
     kernel_tensor = torch.from_numpy(kernel_2d.astype(np.float32)).cuda().contiguous()
@@ -172,7 +179,6 @@ def run_benchmark(
     # 精度检测逻辑 - 参照img_resize.py
     decimal = 8
     mismatch_info = ''
-    ok = False
     
     # 存储特定精度的不匹配百分比
     mismatch_1e1 = '0%'  # 1e-1精度的不匹配百分比
@@ -186,7 +192,6 @@ def run_benchmark(
     for i in range(12):
         try:
             np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            ok = True
             if passed_decimal is None:
                 passed_decimal = decimal
             break

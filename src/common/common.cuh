@@ -58,6 +58,17 @@
  */
 #define CHECK_TORCH_TENSOR_DEVICE(T) TORCH_CHECK((T).device().is_cuda(), "Tensor " #T " must be on CUDA device");
 
+/**
+ * @brief PyTorch张量尺寸检查宏：验证两个张量的尺寸是否相同
+ * 简化尺寸检查代码，提供统一的错误信息格式
+ * 
+ * @param T1 第一个要检查的张量对象
+ * @param T2 第二个要检查的张量对象
+ * 
+ */
+#define CHECK_TORCH_TENSOR_SAME_SIZE(T1, T2) \
+    TORCH_CHECK((T1).sizes() == (T2).sizes(), "Tensor " #T1 " and " #T2 " must have the same size");
+
 inline static int divUp(int a, int b)
 {
     return (a + b - 1) / b;
