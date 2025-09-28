@@ -109,19 +109,17 @@ def adaptive_threshold_percentage(img, block_size, percentage, binary_method):
         for j in range(cols):
             x1 = max(0, j - s2)
             x2 = min(cols - 1, j + s2)
-            
             count = (x2 - x1 + 1) * (y2 - y1 + 1)
+            # count = (x2 - x1) * (y2 - y1)
+            # count = block_size * block_size
             
             # 使用积分图计算区域和
             # 注意：cv2.integral() 返回的积分图比原图大1
-            region_sum = (integral[y2+1, x2+1] - integral[y1, x2+1] - 
-                         integral[y2+1, x1] + integral[y1, x1])
+            region_sum = (integral[y2+1, x2+1] - integral[y1, x2+1] - integral[y2+1, x1] + integral[y1, x1])
+            # region_sum = (integral[y2, x2] - integral[y1, x2] - integral[y2, x1] + integral[y1, x1])
             
             # 应用阈值：current_pixel * count < region_sum * percentage
-            if img_gray[i, j] * count < region_sum * percentage:
-                output[i, j] = low
-            else:
-                output[i, j] = high
+            output[i, j] = low if img_gray[i, j] * count < region_sum * percentage else high
     
     return output
 
@@ -283,7 +281,7 @@ def run_benchmark(
 Hs = [1024]
 Ws = [1024]
 # Ks = [3, 5, 7, 9, 15]
-Ks = [9, 15]
+Ks = [3, 9, 15]
 
 # methods = ['ADAPTIVE_THRESH_MEAN_C', 'ADAPTIVE_THRESH_GAUSSIAN_C', 'PERCENTAGE']
 methods = ['PERCENTAGE']

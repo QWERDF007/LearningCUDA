@@ -151,34 +151,78 @@ __global__ void sum_kernel(T *src, CT *dst, const int ks_h, const int ks_w, cons
 }
 
 template<typename T, typename CT, int CH>
-__global__ void adaptive_threshold_binary_percentage_kernel(T *src, CT *sum, T *dst, const T maxval, const int ws,
-                                                            const double percentage, const int N)
+__global__ void adaptive_threshold_binary_percentage_kernel(T *src, T *dst, const T maxval, const double percentage,
+                                                            const int ks_h, const int ks_w, const int img_h,
+                                                            const int img_w, const int N)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
     const int base = idx * CH;
+
+    const int half_h = ks_h / 2;
+    const int half_w = ks_w / 2;
 
 #pragma unroll
     for (int c = 0; c < CH; ++c)
     {
-        dst[base + c] = src[base + c] * ws < sum[base + c] * percentage ? 0 : maxval;
+        CT sum = 0;
+
+        const int y1 = max(y - half_h, 0);
+        const int y2 = min(y + half_h, img_h - 1);
+        const int x1 = max(x - half_w, 0);
+        const int x2 = min(x + half_w, img_w - 1);
+
+        const int count = (x2 - x1 + 1) * (y2 - y1 + 1);
+
+        for (int yy = y1; yy <= y2; ++yy)
+        {
+            for (int xx = x1; xx <= x2; ++xx)
+            {
+                sum += src[(yy * img_w + xx) * CH + c];
+            }
+        }
+        dst[base + c] = src[base + c] * count < sum * percentage ? 0 : maxval;
     }
 }
 
 template<typename T, typename CT, int CH>
-__global__ void adaptive_threshold_binary_inv_percentage_kernel(T *src, CT *sum, T *dst, const T maxval, const int ws,
-                                                                const double percentage, const int N)
+__global__ void adaptive_threshold_binary_inv_percentage_kernel(T *src, T *dst, const T maxval, const double percentage,
+                                                                const int ks_h, const int ks_w, const int img_h,
+                                                                const int img_w, const int N)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= N)
         return;
+    const int x    = idx % img_w;
+    const int y    = idx / img_w;
     const int base = idx * CH;
+
+    const int half_h = ks_h / 2;
+    const int half_w = ks_w / 2;
 
 #pragma unroll
     for (int c = 0; c < CH; ++c)
     {
-        dst[base + c] = src[base + c] * ws < sum[base + c] * percentage ? maxval : 0;
+        CT sum = 0;
+
+        const int y1 = max(y - half_h, 0);
+        const int y2 = min(y + half_h, img_h - 1);
+        const int x1 = max(x - half_w, 0);
+        const int x2 = min(x + half_w, img_w - 1);
+
+        const int count = (x2 - x1 + 1) * (y2 - y1 + 1);
+
+        for (int yy = y1; yy <= y2; ++yy)
+        {
+            for (int xx = x1; xx <= x2; ++xx)
+            {
+                sum += src[(yy * img_w + xx) * CH + c];
+            }
+        }
+        dst[base + c] = src[base + c] * count < sum * percentage ? maxval : 0;
     }
 }
 
@@ -267,45 +311,37 @@ __global__ void adaptive_threshold_binary_inv_percentage_kernel(T *src, CT *sum,
         return dst;                                                                                                    \
     }
 
-#define TORCH_BINDING_ADAPTIVE_THRESHOLD_PERCENTAGE(tag, th_type, element_type, cal_type, n_pack)                     \
-    torch::Tensor tag##_##element_type##_##cal_type##_percentage(torch::Tensor src, torch::Tensor sum,                \
-                                                                 torch::Tensor dst, const double maxval,              \
-                                                                 const int ksz, const double percentage)              \
-    {                                                                                                                 \
-        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
-        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                      \
-        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                \
-        CHECK_TORCH_TENSOR_DEVICE(sum)                                                                                \
-        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                \
-        CHECK_TORCH_TENSOR_SAME_SIZE(src, sum)                                                                        \
-        CHECK_TORCH_TENSOR_SAME_SIZE(src, dst)                                                                        \
-        const int H  = src.size(0);                                                                                   \
-        const int W  = src.size(1);                                                                                   \
-        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                              \
-        const int N  = H * W;                                                                                         \
-        dim3      block(THREADS);                                                                                     \
-        dim3      grid(divUp(N, THREADS));                                                                            \
-        if (CH == 1)                                                                                                  \
-        {                                                                                                             \
-            sum_kernel<element_type, cal_type, 1><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),  \
-                                                                   reinterpret_cast<cal_type *>(sum.data_ptr()), ksz, \
-                                                                   ksz, H, W, N);                                     \
-            tag##_percentage_kernel<element_type, cal_type, 1><<<grid, block>>>(                                      \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<cal_type *>(sum.data_ptr()),       \
-                reinterpret_cast<element_type *>(dst.data_ptr()), static_cast<element_type>(maxval), ksz * ksz,       \
-                percentage, N);                                                                                       \
-        }                                                                                                             \
-        else if (CH == 3)                                                                                             \
-        {                                                                                                             \
-            sum_kernel<element_type, cal_type, 3><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),  \
-                                                                   reinterpret_cast<cal_type *>(sum.data_ptr()), ksz, \
-                                                                   ksz, H, W, N);                                     \
-            tag##_percentage_kernel<element_type, cal_type, 3><<<grid, block>>>(                                      \
-                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<cal_type *>(sum.data_ptr()),       \
-                reinterpret_cast<element_type *>(dst.data_ptr()), static_cast<element_type>(maxval), ksz * ksz,       \
-                percentage, N);                                                                                       \
-        }                                                                                                             \
-        return dst;                                                                                                   \
+#define TORCH_BINDING_ADAPTIVE_THRESHOLD_PERCENTAGE(tag, th_type, element_type, cal_type, n_pack)                   \
+    torch::Tensor tag##_##element_type##_##cal_type##_percentage(torch::Tensor src, torch::Tensor sum,              \
+                                                                 torch::Tensor dst, const double maxval,            \
+                                                                 const int ksz, const double percentage)            \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(sum)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_SAME_SIZE(src, sum)                                                                      \
+        CHECK_TORCH_TENSOR_SAME_SIZE(src, dst)                                                                      \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            tag##_percentage_kernel<element_type, cal_type, 1><<<grid, block>>>(                                    \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                static_cast<element_type>(maxval), percentage, ksz, ksz, H, W, N);                                  \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            tag##_percentage_kernel<element_type, cal_type, 3><<<grid, block>>>(                                    \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                static_cast<element_type>(maxval), percentage, ksz, ksz, H, W, N);                                  \
+        }                                                                                                           \
+        return dst;                                                                                                 \
     }
 
 TORCH_BINDING_ADAPTIVE_THRESHOLD_MEAN(adaptive_threshold_binary, torch::kUInt8, uint8_t, float, 1)
