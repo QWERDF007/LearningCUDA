@@ -182,4 +182,6 @@ for H, W in Sizes:
     thresh = torch.zeros(1, dtype=torch.int32).cuda().contiguous()
     out = torch.zeros_like(a).cuda().contiguous()
 
-    run_benchmark(lib.threshold_otus_u8, a, thresh, 255, 'u8_otsu', out)
+    run_benchmark(lib.threshold_otsu_u8, a, thresh, 255, 'u8_otsu', out)
+    run_benchmark(lib.threshold_otsu_u8_warp, a, thresh, 255, 'u8_otsu_warp', out)
+    print("-" * 85)

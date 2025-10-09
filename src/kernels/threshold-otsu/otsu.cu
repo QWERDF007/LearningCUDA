@@ -243,7 +243,33 @@ __global__ void threshold_u8x4_kernel(uint8_t *src, uint8_t *dst, int *thresh, c
 }
 
 // Python绑定函数
-void threshold_otus_u8(torch::Tensor src, torch::Tensor dst, torch::Tensor thresh, const uint8_t maxval)
+void threshold_otsu_u8(torch::Tensor src, torch::Tensor dst, torch::Tensor thresh, const uint8_t maxval)
+{
+    CHECK_TORCH_TENSOR_DTYPE(src, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(dst, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DEVICE(src)
+    CHECK_TORCH_TENSOR_DEVICE(dst)
+
+    auto          options = torch::TensorOptions().dtype(torch::kUInt32).device(torch::kCUDA, 0);
+    torch::Tensor hists   = torch::zeros({256}, options);
+
+    const int H = src.size(0);
+    const int W = src.size(1);
+    const int N = H * W;
+
+    dim3 blocks(THREADS);
+    dim3 grids(divUp(N, THREADS));
+    histogram_shared_kernel<<<grids, blocks>>>(reinterpret_cast<uint8_t *>(src.data_ptr()),
+                                               reinterpret_cast<uint32_t *>(hists.data_ptr()), N);
+
+    otsu_gpu_kernel<<<1, 256>>>(reinterpret_cast<uint32_t *>(hists.data_ptr()),
+                                reinterpret_cast<int *>(thresh.data_ptr()));
+    threshold_kernel<<<grids, blocks>>>(reinterpret_cast<uint8_t *>(src.data_ptr()),
+                                        reinterpret_cast<uint8_t *>(dst.data_ptr()),
+                                        reinterpret_cast<int *>(thresh.data_ptr()), maxval, N);
+}
+
+void threshold_otsu_u8_warp(torch::Tensor src, torch::Tensor dst, torch::Tensor thresh, const uint8_t maxval)
 {
     CHECK_TORCH_TENSOR_DTYPE(src, torch::kUInt8)
     CHECK_TORCH_TENSOR_DTYPE(dst, torch::kUInt8)
@@ -267,16 +293,9 @@ void threshold_otus_u8(torch::Tensor src, torch::Tensor dst, torch::Tensor thres
                                                          reinterpret_cast<int32_t *>(hists.data_ptr()), N);
 
     dim3 blocks(THREADS / 4);
-    // dim3 blocks(THREADS);
     dim3 grids(divUp(N, THREADS));
-    // histogram_shared_kernel<<<grids, blocks>>>(reinterpret_cast<uint8_t *>(src.data_ptr()),
-    //                                            reinterpret_cast<uint32_t *>(hists.data_ptr()), N);
-
     otsu_gpu_kernel<<<1, 256>>>(reinterpret_cast<uint32_t *>(hists.data_ptr()),
                                 reinterpret_cast<int *>(thresh.data_ptr()));
-    // threshold_kernel<<<grids, blocks>>>(reinterpret_cast<uint8_t *>(src.data_ptr()),
-    //                                     reinterpret_cast<uint8_t *>(dst.data_ptr()),
-    //                                     reinterpret_cast<int *>(thresh.data_ptr()), maxval, N);
     threshold_u8x4_kernel<<<grids, blocks>>>(reinterpret_cast<uint8_t *>(src.data_ptr()),
                                              reinterpret_cast<uint8_t *>(dst.data_ptr()),
                                              reinterpret_cast<int *>(thresh.data_ptr()), maxval, N);
@@ -284,5 +303,6 @@ void threshold_otus_u8(torch::Tensor src, torch::Tensor dst, torch::Tensor thres
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
-    TORCH_BINDING_COMMON_EXTENSION(threshold_otus_u8)
+    TORCH_BINDING_COMMON_EXTENSION(threshold_otsu_u8)
+    TORCH_BINDING_COMMON_EXTENSION(threshold_otsu_u8_warp)
 }
