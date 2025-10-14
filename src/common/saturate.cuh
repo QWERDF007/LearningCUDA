@@ -31,14 +31,14 @@ __device__ __forceinline__ unsigned char saturate_cast(int v)
 template<>
 __device__ __forceinline__ unsigned char saturate_cast(float v)
 {
-    int iv = round(v);
+    int iv = __float2int_rn(v);
     return saturate_cast<unsigned char>(iv);
 }
 
 template<>
 __device__ __forceinline__ unsigned char saturate_cast(double v)
 {
-    int iv = round(v);
+    int iv = __double2int_rn(v);
     return saturate_cast<unsigned char>(iv);
 }
 
@@ -51,25 +51,25 @@ __device__ __forceinline__ short saturate_cast(int v)
 template<>
 __device__ __forceinline__ short saturate_cast(float v)
 {
-    int iv = round(v);
+    int iv = __float2int_rn(v);
     return saturate_cast<short>(iv);
 }
 
 template<>
 __device__ __forceinline__ short saturate_cast(double v)
 {
-    int iv = round(v);
+    int iv = __double2int_rn(v);
     return saturate_cast<short>(iv);
 }
 
 template<>
 __device__ __forceinline__ int saturate_cast(float v)
 {
-    return round(v);
+    return __float2int_rn(v);
 }
 
 template<>
 __device__ __forceinline__ int saturate_cast(double v)
 {
-    return round(v);
+    return __double2int_rn(v);
 }
