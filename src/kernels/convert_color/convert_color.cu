@@ -106,6 +106,25 @@ __global__ void bgr2rgba_kernel(T *src, T *dst, const int H, const int W, const 
     dst[dst_base + 3] = ColorChannel<T>::max();
 }
 
+template<typename T>
+__global__ void bgr2bgra_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                                const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int src_base = y * src_step + x * 3;
+    const int dst_base = y * dst_step + x * 4;
+
+    dst[dst_base]     = src[src_base];
+    dst[dst_base + 1] = src[src_base + 1];
+    dst[dst_base + 2] = src[src_base + 2];
+    dst[dst_base + 3] = ColorChannel<T>::max();
+}
+
 #define CV_DESCALE(x, n) (((x) + (1 << ((n) - 1))) >> (n))
 
 static const float B2YF = 0.114f;
@@ -180,6 +199,26 @@ static const float R2VF = 0.877f;
 static const int   B2UI = 8061;  // == B2UF*16384
 static const int   R2VI = 14369; // == R2VF*16384
 
+//from YUV
+static const float U2BF = 2.032f;
+static const float U2GF = -0.395f;
+static const float V2GF = -0.581f;
+static const float V2RF = 1.140f;
+static const int   U2BI = 33292;
+static const int   U2GI = -6472;
+static const int   V2GI = -9519;
+static const int   V2RI = 18678;
+
+//from YCrCb
+static const float CB2BF = 1.773f;
+static const float CB2GF = -0.344f;
+static const float CR2GF = -0.714f;
+static const float CR2RF = 1.403f;
+static const int   CB2BI = 29049;
+static const int   CB2GI = -5636;
+static const int   CR2GI = -11698;
+static const int   CR2RI = 22987;
+
 template<typename T>
 __global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
                                  const int N)
@@ -219,7 +258,49 @@ __global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void bgr2YUV_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+__global__ void YCrCb2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                                 const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T Y  = src[base];
+    T Cr = src[base + 1];
+    T Cb = src[base + 2];
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        const float delta = ColorChannel<T>::half();
+
+        float b = Y + (Cb - delta) * CB2BF;
+        float g = Y + (Cb - delta) * CB2GF + (Cr - delta) * CR2GF;
+        float r = Y + (Cr - delta) * CR2RF;
+
+        dst[base]     = b;
+        dst[base + 1] = g;
+        dst[base + 2] = r;
+    }
+    else
+    {
+        const uint8_t delta = ColorChannel<T>::half();
+
+        int b = Y + CV_DESCALE((Cb - delta) * CB2BI, yuv_shift);
+        int g = Y + CV_DESCALE((Cb - delta) * CB2GI + (Cr - delta) * CR2GI, yuv_shift);
+        int r = Y + CV_DESCALE((Cr - delta) * CR2RI, yuv_shift);
+
+        dst[base]     = saturate_cast<T>(b);
+        dst[base + 1] = saturate_cast<T>(g);
+        dst[base + 2] = saturate_cast<T>(r);
+    }
+}
+
+template<typename T>
+__global__ void bgr2yuv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
                                const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -253,6 +334,48 @@ __global__ void bgr2YUV_kernel(T *src, T *dst, const int H, const int W, const i
         dst[base]     = saturate_cast<T>(Y);
         dst[base + 2] = saturate_cast<T>(Cr);
         dst[base + 1] = saturate_cast<T>(Cb);
+    }
+}
+
+template<typename T>
+__global__ void yuv2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                               const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T Y  = src[base];
+    T Cr = src[base + 2];
+    T Cb = src[base + 1];
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        const float delta = ColorChannel<T>::half();
+
+        float b = Y + (Cb - delta) * U2BF;
+        float g = Y + (Cb - delta) * U2GF + (Cr - delta) * V2GF;
+        float r = Y + (Cr - delta) * V2RF;
+
+        dst[base]     = b;
+        dst[base + 1] = g;
+        dst[base + 2] = r;
+    }
+    else
+    {
+        const uint8_t delta = ColorChannel<T>::half();
+
+        int b = Y + CV_DESCALE((Cb - delta) * U2BI, yuv_shift);
+        int g = Y + CV_DESCALE((Cb - delta) * U2GI + (Cr - delta) * V2GI, yuv_shift);
+        int r = Y + CV_DESCALE((Cr - delta) * V2RI, yuv_shift);
+
+        dst[base]     = saturate_cast<T>(b);
+        dst[base + 1] = saturate_cast<T>(g);
+        dst[base + 2] = saturate_cast<T>(r);
     }
 }
 
@@ -295,7 +418,7 @@ __global__ void rgb2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void rgb2YUV_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+__global__ void rgb2yuv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
                                const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -408,6 +531,80 @@ __global__ void bgr2hsv_kernel(T *src, T *dst, const int H, const int W, const i
     }
 }
 
+__constant__ int sector_data[6][4] = {
+    {1, 3, 0},
+    {1, 0, 2},
+    {3, 0, 1},
+    {0, 2, 1},
+    {0, 1, 3},
+    {2, 1, 0}
+};
+
+__device__ void hsv2bgr_f(float h, float s, float v, float &b, float &g, float &r, const float hscale)
+{
+    if (s == 0)
+        b = g = r = v;
+    else
+    {
+        float tab[4];
+        int   sector;
+        h *= hscale;
+        h      = fmodf(h, 6.f);
+        sector = __float2int_rd(h);
+        h -= sector;
+        if ((unsigned)sector >= 6u)
+        {
+            sector = 0;
+            h      = 0.f;
+        }
+
+        tab[0] = v;
+        tab[1] = v * (1.f - s);
+        tab[2] = v * (1.f - s * h);
+        tab[3] = v * (1.f - s * (1.f - h));
+
+        b = tab[sector_data[sector][0]];
+        g = tab[sector_data[sector][1]];
+        r = tab[sector_data[sector][2]];
+    }
+}
+
+template<typename T>
+__global__ void hsv2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                               const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T h = src[base];
+    T s = src[base + 1];
+    T v = src[base + 2];
+
+    float b, g, r;
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        const float hs = 6.f / 360; // hs = 6.f / _hrange = 6.f / 360;
+        hsv2bgr_f(h, s, v, b, g, r, hs);
+        dst[base]     = b;
+        dst[base + 1] = g;
+        dst[base + 2] = r;
+    }
+    else
+    {
+        const float hs = 6.f / 180;
+        hsv2bgr_f(h, s * (1.0f / 255.0f), v * (1.0f / 255.0f), b, g, r, hs);
+        dst[base]     = saturate_cast<T>(b * 255.0f);
+        dst[base + 1] = saturate_cast<T>(g * 255.0f);
+        dst[base + 2] = saturate_cast<T>(r * 255.0f);
+    }
+}
+
 template<typename T>
 __global__ void rgb2hsv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
                                const int N)
@@ -467,7 +664,7 @@ __global__ void rgb2hsv_kernel(T *src, T *dst, const int H, const int W, const i
     }
 }
 
-__device__ void hls_f(float b, float g, float r, float &h, float &l, float &s)
+__device__ void bgr2hls_f(float b, float g, float r, float &h, float &l, float &s)
 {
     float vmax = max(b, max(g, r));
     float vmin = min(b, min(g, r));
@@ -511,7 +708,7 @@ __global__ void bgr2hls_kernel(T *src, T *dst, const int H, const int W, const i
 
     if constexpr (std::is_same_v<T, float>)
     {
-        hls_f(b, g, r, h, l, s);
+        bgr2hls_f(b, g, r, h, l, s);
 
         // dst[base]     = h * hscale; hscale = 360.f / 360.f;
         dst[base]     = h;
@@ -524,12 +721,79 @@ __global__ void bgr2hls_kernel(T *src, T *dst, const int H, const int W, const i
         float g_f = g * (1.f / 255.f);
         float r_f = r * (1.f / 255.f);
 
-        hls_f(b_f, g_f, r_f, h, l, s);
+        bgr2hls_f(b_f, g_f, r_f, h, l, s);
 
         // dst[base]     = saturate_cast<T>(h * hscale); // hscale = 180 / 360.f;
         dst[base]     = saturate_cast<T>(h * 0.5f);
         dst[base + 1] = saturate_cast<T>(l * 255.f);
         dst[base + 2] = saturate_cast<T>(s * 255.f);
+    }
+}
+
+__device__ void hls2bgr_f(float h, float l, float s, float &b, float &g, float &r, const float hscale)
+{
+    if (s == 0)
+        b = g = r = l;
+    else
+    {
+        float tab[4];
+        int   sector;
+        float p2 = l <= 0.5f ? l * (1 + s) : l + s - l * s;
+        float p1 = 2 * l - p2;
+
+        h *= hscale;
+        // We need both loops to clamp (e.g. for h == -1e-40).
+        while (h < 0) h += 6;
+        while (h >= 6) h -= 6;
+
+        sector = __float2int_rd(h);
+        h -= sector;
+
+        tab[0] = p2;
+        tab[1] = p1;
+        tab[2] = p1 + (p2 - p1) * (1 - h);
+        tab[3] = p1 + (p2 - p1) * h;
+
+        b = tab[sector_data[sector][0]];
+        g = tab[sector_data[sector][1]];
+        r = tab[sector_data[sector][2]];
+    }
+}
+
+template<typename T>
+__global__ void hls2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                               const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T h = src[base];
+    T l = src[base + 1];
+    T s = src[base + 2];
+
+    float b, g, r;
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        const float hs = 6.f / 360;
+        hls2bgr_f(h, l, s, b, g, r, hs);
+        dst[base]     = b;
+        dst[base + 1] = g;
+        dst[base + 2] = r;
+    }
+    else
+    {
+        const float hs = 6.f / 180;
+        hls2bgr_f(h, l * (1.f / 255.f), s * (1.f / 255.f), b, g, r, hs);
+
+        dst[base]     = saturate_cast<T>(b * 255.f);
+        dst[base + 1] = saturate_cast<T>(g * 255.f);
+        dst[base + 2] = saturate_cast<T>(r * 255.f);
     }
 }
 
@@ -553,7 +817,7 @@ __global__ void rgb2hls_kernel(T *src, T *dst, const int H, const int W, const i
 
     if constexpr (std::is_same_v<T, float>)
     {
-        hls_f(b, g, r, h, l, s);
+        bgr2hls_f(b, g, r, h, l, s);
 
         // dst[base]     = h * hscale; hscale = 360.f / 360.f;
         dst[base]     = h;
@@ -566,7 +830,7 @@ __global__ void rgb2hls_kernel(T *src, T *dst, const int H, const int W, const i
         float g_f = g * (1.f / 255.f);
         float r_f = r * (1.f / 255.f);
 
-        hls_f(b_f, g_f, r_f, h, l, s);
+        bgr2hls_f(b_f, g_f, r_f, h, l, s);
 
         // dst[base]     = saturate_cast<T>(h * hscale); // hscale = 180 / 360.f;
         dst[base]     = saturate_cast<T>(h * 0.5f);
@@ -619,6 +883,48 @@ __global__ void bgr2xyz_kernel(T *src, T *dst, const int H, const int W, const i
     }
 }
 
+__constant__ int   XYZ2sRGB_D65_i[9] = {13273, -6296, -2042, -3970, 7684, 170, 228, -836, 4331};
+__constant__ float XYZ2sRGB_D65_f[9]
+    = {3.240479, -1.53715, -0.498535, -0.969256, 1.875991, 0.041556, 0.055648, -0.204043, 1.057311};
+
+template<typename T>
+__global__ void xyz2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                               const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T X = src[base];
+    T Y = src[base + 1];
+    T Z = src[base + 2];
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        float B = saturate_cast<T>(X * XYZ2sRGB_D65_f[6] + Y * XYZ2sRGB_D65_f[7] + Z * XYZ2sRGB_D65_f[8]);
+        float G = saturate_cast<T>(X * XYZ2sRGB_D65_f[3] + Y * XYZ2sRGB_D65_f[4] + Z * XYZ2sRGB_D65_f[5]);
+        float R = saturate_cast<T>(X * XYZ2sRGB_D65_f[0] + Y * XYZ2sRGB_D65_f[1] + Z * XYZ2sRGB_D65_f[2]);
+
+        dst[base]     = B;
+        dst[base + 1] = G;
+        dst[base + 2] = R;
+    }
+    else
+    {
+        int B = CV_DESCALE(X * XYZ2sRGB_D65_i[6] + Y * XYZ2sRGB_D65_i[7] + Z * XYZ2sRGB_D65_i[8], xyz_shift);
+        int G = CV_DESCALE(X * XYZ2sRGB_D65_i[3] + Y * XYZ2sRGB_D65_i[4] + Z * XYZ2sRGB_D65_i[5], xyz_shift);
+        int R = CV_DESCALE(X * XYZ2sRGB_D65_i[0] + Y * XYZ2sRGB_D65_i[1] + Z * XYZ2sRGB_D65_i[2], xyz_shift);
+
+        dst[base]     = saturate_cast<T>(B);
+        dst[base + 1] = saturate_cast<T>(G);
+        dst[base + 2] = saturate_cast<T>(R);
+    }
+}
+
 template<typename T>
 __global__ void rgb2xyz_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
                                const int N)
@@ -657,6 +963,117 @@ __global__ void rgb2xyz_kernel(T *src, T *dst, const int H, const int W, const i
     }
 }
 
+// Lab 转换常量
+static const int gamma_shift = 3;
+static const int lab_shift   = 12;
+static const int lab_shift2  = 15;
+
+static const float intScale   = 255.0f * (1 << gamma_shift);
+static const float cbTabScale = 1.0f / (255.0f * (1 << gamma_shift));
+static const float lshift2    = (float)(1 << lab_shift2);
+static const float lthresh    = 216.0f / 24389.0f;
+static const float lscale     = 841.0f / 108.0f;
+static const float lbias      = 16.0f / 116.0f;
+
+__device__ __forceinline__ float applyGamma(float x)
+{
+    //return x <= 0.04045f ? x*(1.f/12.92f) : (float)std::pow((double)(x + 0.055)*(1./1.055), 2.4);
+    return (x > 0.04045f) ? __powf((x + 0.055f) / 1.055f, 2.4f) : (x / 12.92f);
+}
+
+// sRGB gamma 校正函数 (动态计算版本，替代查找表)
+__device__ __forceinline__ unsigned short sRGBGammaTab(int i)
+{
+    return (unsigned short)(__float2int_rn(intScale * applyGamma(i / 255.0f)));
+}
+
+// Lab 立方根查找表的动态计算版本
+__device__ __forceinline__ unsigned short LabCbrtTab(int i)
+{
+    float x = cbTabScale * i;
+    float result;
+    if (x < lthresh)
+        result = lshift2 * (lscale * x + lbias);
+    else
+        result = lshift2 * cbrtf(x);
+    return (unsigned short)(__float2int_rn(result));
+}
+
+// D65 白点
+// __constant__ float D65_inv[3] = {1.0f / 0.950456f, 1.0f / 1.0f, 1.0f / 1.088754f};
+// __constant__ float sRGB2XYZ_D65_f[9] = {0.412453, 0.357580, 0.180423, 0.212671, 0.715160, 0.072169, 0.019334, 0.119193, 0.950227};
+// BGR 到 XYZ 的转换系数 (定点数表示，已归一化到 D65 白点)
+// 计算方式: cvRound((1 << lab_shift) * sRGB2XYZ_D65[i] / D65[i])
+// BGR 顺序: R, G, B
+__constant__ int BGR2XYZ_coeffs[9] = {
+    1777, // C0: X from R = round(4096 * 0.412453 / 0.950456)
+    1541, // C1: X from G = round(4096 * 0.357580 / 0.950456)
+    778,  // C2: X from B = round(4096 * 0.180423 / 0.950456)
+    871,  // C3: Y from R = round(4096 * 0.212671 / 1.0)
+    2929, // C4: Y from G = round(4096 * 0.715160 / 1.0)
+    296,  // C5: Y from B = round(4096 * 0.072169 / 1.0)
+    73,   // C6: Z from R = round(4096 * 0.019334 / 1.088754)
+    448,  // C7: Z from G = round(4096 * 0.119193 / 1.088754)
+    3575  // C8: Z from B = round(4096 * 0.950227 / 1.088754)
+};
+
+static const int lshift = 1 << lab_shift;
+static const int Lscale = (116 * 255 + 50) / 100;
+static const int Lshift = -((16 * 255 * (1 << lab_shift2) + 50) / 100);
+
+template<typename T>
+__global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
+                               const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int base = y * src_step + x * 3;
+
+    T blue  = src[base];
+    T green = src[base + 1];
+    T red   = src[base + 2];
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+    }
+    else
+    {
+        // 1. Gamma 校正 (使用 sRGB gamma)
+        int B = sRGBGammaTab(blue);
+        int G = sRGBGammaTab(green);
+        int R = sRGBGammaTab(red);
+
+        // 2. 从常量数组读取转换系数
+        int C0 = BGR2XYZ_coeffs[0], C1 = BGR2XYZ_coeffs[1], C2 = BGR2XYZ_coeffs[2];
+        int C3 = BGR2XYZ_coeffs[3], C4 = BGR2XYZ_coeffs[4], C5 = BGR2XYZ_coeffs[5];
+        int C6 = BGR2XYZ_coeffs[6], C7 = BGR2XYZ_coeffs[7], C8 = BGR2XYZ_coeffs[8];
+
+        // 3. RGB 到 XYZ 转换并查表计算立方根
+        int X = CV_DESCALE(R * C0 + G * C1 + B * C2, lab_shift);
+        int Y = CV_DESCALE(R * C3 + G * C4 + B * C5, lab_shift);
+        int Z = CV_DESCALE(R * C6 + G * C7 + B * C8, lab_shift);
+
+        int fX = LabCbrtTab(X);
+        int fY = LabCbrtTab(Y);
+        int fZ = LabCbrtTab(Z);
+
+        // 4. XYZ 到 Lab 转换
+
+        int L = CV_DESCALE(Lscale * fY + Lshift, lab_shift2);
+        int a = CV_DESCALE(500 * (fX - fY) + 4194304, lab_shift2); // 128 * （1 << 15) = 128 * 32768 = 4194304
+        int b = CV_DESCALE(200 * (fY - fZ) + 4194304, lab_shift2);
+
+        // 5. 饱和转换并存储结果
+        dst[base]     = saturate_cast<T>(L);
+        dst[base + 1] = saturate_cast<T>(a);
+        dst[base + 2] = saturate_cast<T>(b);
+    }
+}
+
 #define TORCH_BINDING_CVTCOLOR_TEMPLATE(tag, th_type, element_type, n_pack)                                           \
     void tag##_##element_type(torch::Tensor src, torch::Tensor dst)                                                   \
     {                                                                                                                 \
@@ -682,6 +1099,7 @@ TORCH_BINDING_CVTCOLOR_TEMPLATE(gray2bgr, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(gray2bgra, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2rgb, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2rgba, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2bgra, torch::kUInt8, uint8_t, 1)
 
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2gray, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2gray, torch::kUInt8, uint8_t, 1)
@@ -698,10 +1116,10 @@ TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2YCrCb, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2YCrCb, torch::kFloat32, float, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2YCrCb, torch::kFloat32, float, 1)
 
-TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2YUV, torch::kUInt8, uint8_t, 1)
-TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2YUV, torch::kUInt8, uint8_t, 1)
-TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2YUV, torch::kFloat32, float, 1)
-TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2YUV, torch::kFloat32, float, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2yuv, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2yuv, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2yuv, torch::kFloat32, float, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2yuv, torch::kFloat32, float, 1)
 
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2hsv, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2hsv, torch::kUInt8, uint8_t, 1)
@@ -718,12 +1136,30 @@ TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2xyz, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2xyz, torch::kFloat32, float, 1)
 TORCH_BINDING_CVTCOLOR_TEMPLATE(rgb2xyz, torch::kFloat32, float, 1)
 
+TORCH_BINDING_CVTCOLOR_TEMPLATE(YCrCb2bgr, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(yuv2bgr, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(YCrCb2bgr, torch::kFloat32, float, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(yuv2bgr, torch::kFloat32, float, 1)
+
+TORCH_BINDING_CVTCOLOR_TEMPLATE(xyz2bgr, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(xyz2bgr, torch::kFloat32, float, 1)
+
+TORCH_BINDING_CVTCOLOR_TEMPLATE(hsv2bgr, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(hsv2bgr, torch::kFloat32, float, 1)
+
+TORCH_BINDING_CVTCOLOR_TEMPLATE(hls2bgr, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(hls2bgr, torch::kFloat32, float, 1)
+
+TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2lab, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_CVTCOLOR_TEMPLATE(bgr2lab, torch::kFloat32, float, 1)
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(gray2bgr_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(gray2bgra_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(bgr2rgb_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(bgr2rgba_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(bgr2bgra_uint8_t)
 
     TORCH_BINDING_COMMON_EXTENSION(bgr2gray_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(rgb2gray_uint8_t)
@@ -741,10 +1177,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(bgr2YCrCb_float)
     TORCH_BINDING_COMMON_EXTENSION(rgb2YCrCb_float)
 
-    TORCH_BINDING_COMMON_EXTENSION(bgr2YUV_uint8_t)
-    TORCH_BINDING_COMMON_EXTENSION(rgb2YUV_uint8_t)
-    TORCH_BINDING_COMMON_EXTENSION(bgr2YUV_float)
-    TORCH_BINDING_COMMON_EXTENSION(rgb2YUV_float)
+    TORCH_BINDING_COMMON_EXTENSION(bgr2yuv_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(rgb2yuv_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(bgr2yuv_float)
+    TORCH_BINDING_COMMON_EXTENSION(rgb2yuv_float)
 
     TORCH_BINDING_COMMON_EXTENSION(bgr2hsv_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(rgb2hsv_uint8_t)
@@ -760,4 +1196,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(rgb2xyz_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(bgr2xyz_float)
     TORCH_BINDING_COMMON_EXTENSION(rgb2xyz_float)
+
+    TORCH_BINDING_COMMON_EXTENSION(YCrCb2bgr_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(yuv2bgr_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(YCrCb2bgr_float)
+    TORCH_BINDING_COMMON_EXTENSION(yuv2bgr_float)
+
+    TORCH_BINDING_COMMON_EXTENSION(xyz2bgr_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(xyz2bgr_float)
+
+    TORCH_BINDING_COMMON_EXTENSION(hsv2bgr_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(hsv2bgr_float)
+
+    TORCH_BINDING_COMMON_EXTENSION(hls2bgr_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(hls2bgr_float)
+
+    TORCH_BINDING_COMMON_EXTENSION(bgr2lab_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(bgr2lab_float)
 }

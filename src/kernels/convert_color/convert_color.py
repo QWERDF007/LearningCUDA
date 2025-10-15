@@ -160,15 +160,15 @@ def run_benchmark(
     if decimal <= 0:
         decimal = -decimal
         sign = ''
-    print(f"{out_info:>40}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    print(f"{out_info:>25}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)
     
     return out, mean_time, tag
 
-Hs = [1024, 2048, 4096]
-Ws = [1024, 2048, 4096]
+Hs = [1024, 2048]
+Ws = [1024, 2048]
 Sizes = [(H, W) for H in Hs for W in Ws]
 
 for H, W in Sizes:
@@ -191,20 +191,29 @@ for H, W in Sizes:
     run_benchmark(lib.bgr2YCrCb_uint8_t, a, cv2.COLOR_BGR2YCrCb, 'COLOR_BGR2YCrCb [uint8]', out)
     run_benchmark(lib.rgb2YCrCb_uint8_t, a, cv2.COLOR_RGB2YCrCb, 'COLOR_RGB2YCrCb [uint8]', out)
 
-    run_benchmark(lib.bgr2YUV_uint8_t, a, cv2.COLOR_BGR2YUV, 'COLOR_BGR2YUV [uint8]', out)
-    run_benchmark(lib.rgb2YUV_uint8_t, a, cv2.COLOR_RGB2YUV, 'COLOR_RGB2YUV [uint8]', out)
+    run_benchmark(lib.bgr2yuv_uint8_t, a, cv2.COLOR_BGR2YUV, 'COLOR_BGR2YUV [uint8]', out)
+    run_benchmark(lib.rgb2yuv_uint8_t, a, cv2.COLOR_RGB2YUV, 'COLOR_RGB2YUV [uint8]', out)
 
     run_benchmark(lib.bgr2hsv_uint8_t, a, cv2.COLOR_BGR2HSV, 'COLOR_BGR2HSV [uint8]', out)
+    run_benchmark(lib.hsv2bgr_uint8_t, a, cv2.COLOR_HSV2BGR, 'COLOR_HSV2BGR [uint8]', out)
     run_benchmark(lib.rgb2hsv_uint8_t, a, cv2.COLOR_RGB2HSV, 'COLOR_RGB2HSV [uint8]', out)
 
     run_benchmark(lib.bgr2hls_uint8_t, a, cv2.COLOR_BGR2HLS, 'COLOR_BGR2HLS [uint8]', out)
+    run_benchmark(lib.hls2bgr_uint8_t, a, cv2.COLOR_HLS2BGR, 'COLOR_HLS2BGR [uint8]', out)
     run_benchmark(lib.rgb2hls_uint8_t, a, cv2.COLOR_RGB2HLS, 'COLOR_RGB2HLS [uint8]', out)
 
     run_benchmark(lib.bgr2xyz_uint8_t, a, cv2.COLOR_BGR2XYZ, 'COLOR_BGR2XYZ [uint8]', out)
+    run_benchmark(lib.xyz2bgr_uint8_t, a, cv2.COLOR_XYZ2BGR, 'COLOR_XYZ2BGR [uint8]', out)
     run_benchmark(lib.rgb2xyz_uint8_t, a, cv2.COLOR_RGB2XYZ, 'COLOR_RGB2XYZ [uint8]', out)
+
+    run_benchmark(lib.YCrCb2bgr_uint8_t, a, cv2.COLOR_YCrCb2BGR, 'COLOR_YCrCb2BGR [uint8]', out)
+    run_benchmark(lib.yuv2bgr_uint8_t, a, cv2.COLOR_YUV2BGR, 'COLOR_YUV2BGR [uint8]', out)
+
+    run_benchmark(lib.bgr2lab_uint8_t, a, cv2.COLOR_BGR2Lab, 'COLOR_BGR2Lab [uint8]', out)
 
     out = torch.zeros((H, W, 4), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.bgr2rgba_uint8_t, a, cv2.COLOR_BGR2RGBA, 'COLOR_BGR2RGBA [uint8]', out)
+    run_benchmark(lib.bgr2bgra_uint8_t, a, cv2.COLOR_BGR2BGRA, 'COLOR_BGR2BGRA [uint8]', out)
 
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.bgr2gray_uint8_t, a, cv2.COLOR_BGR2GRAY, 'COLOR_BGR2GRAY [uint8]', out)
@@ -227,17 +236,25 @@ for H, W in Sizes:
     run_benchmark(lib.bgr2YCrCb_float, a, cv2.COLOR_BGR2YCrCb, 'COLOR_BGR2YCrCb [float32]', out)
     run_benchmark(lib.rgb2YCrCb_float, a, cv2.COLOR_RGB2YCrCb, 'COLOR_RGB2YCrCb [float32]', out)
 
-    run_benchmark(lib.bgr2YUV_float, a, cv2.COLOR_BGR2YUV, 'COLOR_BGR2YUV [float32]', out)
-    run_benchmark(lib.rgb2YUV_float, a, cv2.COLOR_RGB2YUV, 'COLOR_RGB2YUV [float32]', out)
+    run_benchmark(lib.bgr2yuv_float, a, cv2.COLOR_BGR2YUV, 'COLOR_BGR2YUV [float32]', out)
+    run_benchmark(lib.rgb2yuv_float, a, cv2.COLOR_RGB2YUV, 'COLOR_RGB2YUV [float32]', out)
 
     run_benchmark(lib.bgr2hsv_float, a, cv2.COLOR_BGR2HSV, 'COLOR_BGR2HSV [float32]', out)
+    run_benchmark(lib.hsv2bgr_float, a, cv2.COLOR_HSV2BGR, 'COLOR_HSV2BGR [float32]', out)
     run_benchmark(lib.rgb2hsv_float, a, cv2.COLOR_RGB2HSV, 'COLOR_RGB2HSV [float32]', out)
 
     run_benchmark(lib.bgr2hls_float, a, cv2.COLOR_BGR2HLS, 'COLOR_BGR2HLS [float32]', out)
+    run_benchmark(lib.hls2bgr_float, a, cv2.COLOR_HLS2BGR, 'COLOR_HLS2BGR [float32]', out)
     run_benchmark(lib.rgb2hls_float, a, cv2.COLOR_RGB2HLS, 'COLOR_RGB2HLS [float32]', out)
 
     run_benchmark(lib.bgr2xyz_float, a, cv2.COLOR_BGR2XYZ, 'COLOR_BGR2XYZ [float32]', out)
+    run_benchmark(lib.xyz2bgr_float, a, cv2.COLOR_XYZ2BGR, 'COLOR_XYZ2BGR [float32]', out)
     run_benchmark(lib.rgb2xyz_float, a, cv2.COLOR_RGB2XYZ, 'COLOR_RGB2XYZ [float32]', out)
+
+    run_benchmark(lib.YCrCb2bgr_float, a, cv2.COLOR_YCrCb2BGR, 'COLOR_YCrCb2BGR [float32]', out)
+    run_benchmark(lib.yuv2bgr_float, a, cv2.COLOR_YUV2BGR, 'COLOR_YUV2BGR [float32]', out)
+
+    # run_benchmark(lib.bgr2lab_float, a, cv2.COLOR_BGR2Lab, 'COLOR_BGR2Lab [float32]', out)
 
     out = torch.zeros((H, W, 4), dtype=torch.float32).cuda().contiguous()
     run_benchmark(lib.bgr2rgba_float, a, cv2.COLOR_BGR2RGBA, 'COLOR_BGR2RGBA [float32]', out)
