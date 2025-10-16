@@ -975,6 +975,11 @@ static const float lthresh    = 216.0f / 24389.0f;
 static const float lscale     = 841.0f / 108.0f;
 static const float lbias      = 16.0f / 116.0f;
 
+// 常量: 0.008856 = (6/29)^3, 7.787 = (29/3)^3/(29*4), 16/116 ≈ 0.137931
+static const float thresh = 0.008856f;
+static const float scale  = 7.787037f;
+static const float bias   = 16.0f / 116.0f;
+
 __device__ __forceinline__ float applyGamma(float x)
 {
     //return x <= 0.04045f ? x*(1.f/12.92f) : (float)std::pow((double)(x + 0.055)*(1./1.055), 2.4);
@@ -1017,9 +1022,152 @@ __constant__ int BGR2XYZ_coeffs[9] = {
     3575  // C8: Z from B = round(4096 * 0.950227 / 1.088754)
 };
 
+// sRGB2XYZ_D65[i] / D65[i]
+__constant__ float BGR2XYZ_coeffs_f[9] = {
+    0.433953f, // C0: X from R = 0.412453 / 0.950456
+    0.376219f, // C1: X from G = 0.357580 / 0.950456
+    0.189828f, // C2: X from B = 0.180423 / 0.950456
+    0.212671f, // C3: Y from R = 0.212671 / 1.0
+    0.715160f, // C4: Y from G = 0.715160 / 1.0
+    0.072169f, // C5: Y from B = 0.072169 / 1.0
+    0.017758f, // C6: Z from R = 0.019334 / 1.088754
+    0.109477f, // C7: Z from G = 0.119193 / 1.088754
+    0.872766f  // C8: Z from B = 0.950227 / 1.088754
+};
+
 static const int lshift = 1 << lab_shift;
 static const int Lscale = (116 * 255 + 50) / 100;
 static const int Lshift = -((16 * 255 * (1 << lab_shift2) + 50) / 100);
+
+// 三线性插值常量
+static const int lab_base_shift  = 14;
+static const int LAB_BASE        = 1 << lab_base_shift; // 16384
+static const int lab_lut_shift   = 5;
+static const int LAB_LUT_DIM     = (1 << lab_lut_shift) + 1; // 33
+static const int trilinear_shift = 8 - lab_lut_shift + 1;    // 4
+static const int TRILINEAR_BASE  = 1 << trilinear_shift;     // 16
+
+// 动态计算 RGB 到 Lab 的转换（用于三线性插值的顶点）
+__device__ __forceinline__ void computeLabVertex(float R, float G, float B, short &L_out, short &a_out, short &b_out)
+{
+    // 1. Gamma 校正
+    R = applyGamma(R);
+    G = applyGamma(G);
+    B = applyGamma(B);
+
+    // 2. RGB 到 XYZ
+    float X = R * BGR2XYZ_coeffs_f[0] + G * BGR2XYZ_coeffs_f[1] + B * BGR2XYZ_coeffs_f[2];
+    float Y = R * BGR2XYZ_coeffs_f[3] + G * BGR2XYZ_coeffs_f[4] + B * BGR2XYZ_coeffs_f[5];
+    float Z = R * BGR2XYZ_coeffs_f[6] + G * BGR2XYZ_coeffs_f[7] + B * BGR2XYZ_coeffs_f[8];
+
+    // 3. 计算立方根（使用精确的分数常量）
+    // lthresh = 216/24389 = (6/29)^3
+    // lscale = 841/108 = (29/3)^3/(29*4)
+    // lbias = 16/116
+    const float thresh = 216.0f / 24389.0f;
+    const float scale  = 841.0f / 108.0f;
+    const float bias   = 16.0f / 116.0f;
+
+    float FX = X > thresh ? cbrtf(X) : (scale * X + bias);
+    float FY = Y > thresh ? cbrtf(Y) : (scale * Y + bias);
+    float FZ = Z > thresh ? cbrtf(Z) : (scale * Z + bias);
+
+    // 4. XYZ 到 Lab（使用精确的分数常量）
+    // f9033 = 29*29*29/27 = (29/3)^3 = 903.296296...
+    const float f9033 = (29.0f * 29.0f * 29.0f) / 27.0f;
+    float       L     = Y > thresh ? (116.0f * FY - 16.0f) : (f9033 * Y);
+    float       a     = 500.0f * (FX - FY);
+    float       b     = 200.0f * (FY - FZ);
+
+    // 5. 编码为 short (与 OpenCV LUT 格式一致)
+    // L: LAB_BASE*L/100, a: LAB_BASE*(a+128)/256, b: LAB_BASE*(b+128)/256
+    L_out = (short)(__float2int_rn(LAB_BASE * L / 100.0f));
+    a_out = (short)(__float2int_rn(LAB_BASE * (a + 128.0f) / 256.0f));
+    b_out = (short)(__float2int_rn(LAB_BASE * (b + 128.0f) / 256.0f));
+}
+
+// 三线性插值（动态计算版本）
+__device__ __forceinline__ void trilinearInterpolate(float R, float G, float B, int &L, int &a, int &b)
+{
+    // 将 [0,1] 的 RGB 缩放到 LAB_BASE
+    int iR = __float2int_rn(R * LAB_BASE);
+    int iG = __float2int_rn(G * LAB_BASE);
+    int iB = __float2int_rn(B * LAB_BASE);
+
+    // 限制范围
+    iR = min(max(iR, 0), LAB_BASE);
+    iG = min(max(iG, 0), LAB_BASE);
+    iB = min(max(iB, 0), LAB_BASE);
+
+    // 计算 LUT 索引（立方体的原点）
+    int tx = iR >> (lab_base_shift - lab_lut_shift);
+    int ty = iG >> (lab_base_shift - lab_lut_shift);
+    int tz = iB >> (lab_base_shift - lab_lut_shift);
+
+    // 确保索引在有效范围内 [0, LAB_LUT_DIM-1]
+    tx = min(max(tx, 0), LAB_LUT_DIM - 1);
+    ty = min(max(ty, 0), LAB_LUT_DIM - 1);
+    tz = min(max(tz, 0), LAB_LUT_DIM - 1);
+
+    // 计算插值权重
+    const int bitMask = (1 << trilinear_shift) - 1;
+    int       x       = (iR >> (lab_base_shift - 8 - 1)) & bitMask;
+    int       y       = (iG >> (lab_base_shift - 8 - 1)) & bitMask;
+    int       z       = (iB >> (lab_base_shift - 8 - 1)) & bitMask;
+
+    // 计算三线性插值权重（8个顶点）
+    int pp = TRILINEAR_BASE - x;
+    int qq = TRILINEAR_BASE - y;
+    int rr = TRILINEAR_BASE - z;
+
+    int w[8];
+    w[0] = pp * qq * rr;
+    w[1] = pp * qq * z;
+    w[2] = pp * y * rr;
+    w[3] = pp * y * z;
+    w[4] = x * qq * rr;
+    w[5] = x * qq * z;
+    w[6] = x * y * rr;
+    w[7] = x * y * z;
+
+    // 动态计算 8 个顶点的 Lab 值
+    short       Lab[8][3]; // [顶点][L,a,b]
+    const float scale = 1.0f / (LAB_LUT_DIM - 1);
+
+    for (int i = 0; i < 8; i++)
+    {
+        int dx = (i >> 2) & 1;
+        int dy = (i >> 1) & 1;
+        int dz = i & 1;
+
+        // 使用 min 限制索引，与 OpenCV 的 fill_one 函数一致
+        int idx_x = min(tx + dx, LAB_LUT_DIM - 1);
+        int idx_y = min(ty + dy, LAB_LUT_DIM - 1);
+        int idx_z = min(tz + dz, LAB_LUT_DIM - 1);
+
+        float vR = idx_x * scale;
+        float vG = idx_y * scale;
+        float vB = idx_z * scale;
+
+        computeLabVertex(vR, vG, vB, Lab[i][0], Lab[i][1], Lab[i][2]);
+    }
+
+    // 三线性插值
+    L = 0;
+    a = 0;
+    b = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        L += Lab[i][0] * w[i];
+        a += Lab[i][1] * w[i];
+        b += Lab[i][2] * w[i];
+    }
+
+    // Descale
+    L = CV_DESCALE(L, trilinear_shift * 3);
+    a = CV_DESCALE(a, trilinear_shift * 3);
+    b = CV_DESCALE(b, trilinear_shift * 3);
+}
 
 template<typename T>
 __global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
@@ -1039,6 +1187,30 @@ __global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const i
 
     if constexpr (std::is_same_v<T, float>)
     {
+        // 1. Clip 输入到 [0, 1]
+        float R = fminf(fmaxf(red, 0.0f), 1.0f);
+        float G = fminf(fmaxf(green, 0.0f), 1.0f);
+        float B = fminf(fmaxf(blue, 0.0f), 1.0f);
+
+        // 2. 三线性插值计算 Lab
+        int iL, ia, ib;
+        trilinearInterpolate(R, G, B, iL, ia, ib);
+
+        // 3. 解码为浮点 Lab 值
+        float L = iL * 1.0f / LAB_BASE;
+        float a = ia * 1.0f / LAB_BASE;
+        float b = ib * 1.0f / LAB_BASE;
+
+        // 4. 转换到标准 Lab 范围
+        // L: [0, 100], a: [-128, 127], b: [-128, 127]
+        L = L * 100.0f;
+        a = a * 256.0f - 128.0f;
+        b = b * 256.0f - 128.0f;
+
+        // 5. 存储结果
+        dst[base]     = L;
+        dst[base + 1] = a;
+        dst[base + 2] = b;
     }
     else
     {

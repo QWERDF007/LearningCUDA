@@ -254,7 +254,7 @@ for H, W in Sizes:
     run_benchmark(lib.YCrCb2bgr_float, a, cv2.COLOR_YCrCb2BGR, 'COLOR_YCrCb2BGR [float32]', out)
     run_benchmark(lib.yuv2bgr_float, a, cv2.COLOR_YUV2BGR, 'COLOR_YUV2BGR [float32]', out)
 
-    # run_benchmark(lib.bgr2lab_float, a, cv2.COLOR_BGR2Lab, 'COLOR_BGR2Lab [float32]', out)
+    run_benchmark(lib.bgr2lab_float, a, cv2.COLOR_BGR2Lab, 'COLOR_BGR2Lab [float32]', out)
 
     out = torch.zeros((H, W, 4), dtype=torch.float32).cuda().contiguous()
     run_benchmark(lib.bgr2rgba_float, a, cv2.COLOR_BGR2RGBA, 'COLOR_BGR2RGBA [float32]', out)
