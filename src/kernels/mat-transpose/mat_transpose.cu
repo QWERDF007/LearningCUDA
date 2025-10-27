@@ -28,6 +28,19 @@ __global__ void mat_transpose_f32_coalesced_read_kernel(float *A, float *B, cons
     B[ax * H + ay] = A[tid];
 }
 
+__global__ void mat_transpose_u8_coalesced_read_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    // 计算全局线程索引
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= H * W)
+        return;
+
+    const int ay = tid / W;
+    const int ax = tid % W;
+
+    B[ax * H + ay] = A[tid];
+}
+
 /**
  * @brief 矩阵转置核函数 (写连续)
  * 
@@ -35,6 +48,19 @@ __global__ void mat_transpose_f32_coalesced_read_kernel(float *A, float *B, cons
  * 同一个 warp 合并内存写入, 虽然存在非合并内存读取, 但利用只读数据可以缓存加速非合并的访问
  */
 __global__ void mat_transpose_f32_coalesced_write_kernel(float *A, float *B, const int H, const int W)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= H * W)
+        return;
+
+    const int by = tid / H; // B 行索引
+    const int bx = tid % H; // B 列索引
+
+    // B[by * H + bx] = A[bx * W + by];
+    B[tid] = A[bx * W + by];
+}
+
+__global__ void mat_transpose_u8_coalesced_write_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= H * W)
@@ -63,6 +89,22 @@ __global__ void mat_transpose_f32x4_coalesced_read_kernel(float *A, float *B, co
     B[(ax + 3) * H + ay] = a.w;
 }
 
+__global__ void mat_transpose_u8x4_coalesced_read_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    // 计算全局线程索引
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int ay  = (idx * 4) / W; // A 行索引
+    const int ax  = (idx * 4) % W; // A 列索引
+    if (ay >= H || ax + 3 >= W)
+        return;
+    uchar4 a = reinterpret_cast<uchar4 *>(A)[idx];
+
+    B[ax * H + ay]       = a.x;
+    B[(ax + 1) * H + ay] = a.y;
+    B[(ax + 2) * H + ay] = a.z;
+    B[(ax + 3) * H + ay] = a.w;
+}
+
 __global__ void mat_transpose_f32x4_coalesced_write_kernel(float *A, float *B, const int H, const int W)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -78,6 +120,44 @@ __global__ void mat_transpose_f32x4_coalesced_write_kernel(float *A, float *B, c
     a.w = A[(bx + 3) * W + by];
 
     reinterpret_cast<float4 *>(B)[idx] = a;
+}
+
+__global__ void mat_transpose_u8x4_coalesced_write_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int by  = (idx * 4) / H; // B 行索引
+    const int bx  = (idx * 4) % H; // B 列索引
+    if (bx >= H || by >= W)
+        return;
+
+    uchar4 a;
+    a.x = A[bx * W + by];
+    a.y = A[(bx + 1) * W + by];
+    a.z = A[(bx + 2) * W + by];
+    a.w = A[(bx + 3) * W + by];
+
+    reinterpret_cast<uchar4 *>(B)[idx] = a;
+}
+
+__global__ void mat_transpose_u8x16_coalesced_write_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int by  = (idx * 16) / H; // B 行索引
+    const int bx  = (idx * 16) % H; // B 列索引
+    if (bx + 15 >= H || by >= W)
+        return;
+
+    // 从 A 非连续读取 16 个元素（分散读取）
+    uint8_t pack[16];
+
+#pragma unroll
+    for (int i = 0; i < 16; i++)
+    {
+        pack[i] = A[(bx + i) * W + by];
+    }
+
+    // 连续写入 B（合并写入），使用 uint4 一次写入 16 字节
+    reinterpret_cast<uint4 *>(B)[idx] = *reinterpret_cast<uint4 *>(pack);
 }
 
 /**
@@ -132,6 +212,22 @@ __global__ void mat_transpose_f32x4_coalesced_read_2d_kernel(float *A, float *B,
     B[(ax + 3) * H + ay] = a.w;
 }
 
+__global__ void mat_transpose_u8x4_coalesced_read_2d_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    const int x  = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y  = blockIdx.y * blockDim.y + threadIdx.y;
+    const int ax = 4 * x;
+    const int ay = y;
+    if (ax + 3 >= W || ay >= H)
+        return;
+    uchar4 a = reinterpret_cast<uchar4 *>(A)[ay * W / 4 + x];
+
+    B[ax * H + ay]       = a.x;
+    B[(ax + 1) * H + ay] = a.y;
+    B[(ax + 2) * H + ay] = a.z;
+    B[(ax + 3) * H + ay] = a.w;
+}
+
 /**
  * @brief 2D 布局, 合并写, 一次处理 4 个元素
  */
@@ -150,6 +246,45 @@ __global__ void mat_transpose_f32x4_coalesced_write_2d_kernel(float *A, float *B
     a.w = A[(ay + 3) * W + ax];
 
     reinterpret_cast<float4 *>(B)[x * H / 4 + y] = a;
+}
+
+__global__ void mat_transpose_u8x4_coalesced_write_2d_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    const int x  = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y  = blockIdx.y * blockDim.y + threadIdx.y;
+    const int ax = x;
+    const int ay = y * 4;
+    if (ax >= W || ay + 3 >= H)
+        return;
+    uchar4 a;
+    a.x = A[ay * W + ax];
+    a.y = A[(ay + 1) * W + ax];
+    a.z = A[(ay + 2) * W + ax];
+    a.w = A[(ay + 3) * W + ax];
+
+    reinterpret_cast<uchar4 *>(B)[x * H / 4 + y] = a;
+}
+
+__global__ void mat_transpose_u8x16_coalesced_write_2d_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
+{
+    const int x  = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y  = blockIdx.y * blockDim.y + threadIdx.y;
+    const int ax = x;
+    const int ay = y * 16;
+    if (ax >= W || ay + 15 >= H)
+        return;
+
+    // 从 A 非连续读取 16 个元素（分散读取）
+    uint8_t pack[16];
+
+#pragma unroll
+    for (int i = 0; i < 16; i++)
+    {
+        pack[i] = A[(ay + i) * W + ax];
+    }
+
+    // 连续写入 B（合并写入），使用 uint4 一次写入 16 字节
+    reinterpret_cast<uint4 *>(B)[x * H / 16 + y] = *reinterpret_cast<uint4 *>(pack);
 }
 
 /**
@@ -178,11 +313,12 @@ __global__ void mat_transpose_f32_diagnonal_2d_kernel(float *A, float *B, const 
  * 该核函数使用共享内存来优化矩阵转置操作，通过分块处理和内存合并访问提高性能
  * 采用分块策略，先将数据加载到共享内存，再以转置的方式写回全局内存
  */
-__global__ void mat_transpose_f32_2d_shared_kernel(const float *A, float *B, int H, int W)
+template<typename T>
+__global__ void mat_transpose_shared_kernel(const T *A, T *B, int H, int W)
 {
     // 声明共享内存，添加 +1 填充以避免 bank 冲突
     // TILE_DIM x (TILE_DIM + 1) 的二维数组
-    __shared__ float tile[TILE_DIM][TILE_DIM + 1];
+    __shared__ T tile[TILE_DIM][TILE_DIM + 1];
 
     // 计算输入矩阵 A (cols = W, rows = H) 中的全局坐标
     // x 对应列索引，y 对应行索引
@@ -206,7 +342,7 @@ __global__ void mat_transpose_f32_2d_shared_kernel(const float *A, float *B, int
         {
             // 越界处理：填充零值，避免读取到过时数据
             // 虽然非必要，但提高安全性
-            tile[threadIdx.y + j][threadIdx.x] = 0.0f;
+            tile[threadIdx.y + j][threadIdx.x] = 0;
         }
     }
 
@@ -236,10 +372,11 @@ __global__ void mat_transpose_f32_2d_shared_kernel(const float *A, float *B, int
     }
 }
 
-__global__ void mat_transpose_f32_2d_shared_2_kernel(const float *A, float *B, int H, int W)
+template<typename T>
+__global__ void mat_transpose_shared_2_kernel(const T *A, T *B, int H, int W)
 {
     // 声明共享内存
-    __shared__ float tile[TILE_DIM][TILE_DIM];
+    __shared__ T tile[TILE_DIM][TILE_DIM];
 
     int xIndex = blockIdx.x * TILE_DIM + threadIdx.x; // 全局列索引
     int yIndex = blockIdx.y * TILE_DIM + threadIdx.y; // 全局行索引
@@ -303,6 +440,20 @@ __global__ void mat_transpose_f32_2d_shared_2_kernel(const float *A, float *B, i
                                                       reinterpret_cast<element_type *>(y.data_ptr()), H, W); \
     }
 
+#define TORCH_BINDING_MAT_SHARED_TRANSPOSE_2D(tag, th_type, element_type, n_pack_h, n_pack_w)                      \
+    void mat_transpose_##tag##_##element_type(torch::Tensor x, torch::Tensor y)                                    \
+    {                                                                                                              \
+        CHECK_TORCH_TENSOR_DTYPE(x, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(y, (th_type))                                                                     \
+        const int H = x.size(0);                                                                                   \
+        const int W = x.size(1);                                                                                   \
+        const int N = H * W;                                                                                       \
+        dim3      block(TILE_DIM, BLOCK_ROWS);                                                                     \
+        dim3      grid(divUp(W, block.x *n_pack_w), divUp(H, block.y *n_pack_h));                                  \
+        mat_transpose_##tag##_kernel<element_type><<<grid, block>>>(                                               \
+            reinterpret_cast<element_type *>(x.data_ptr()), reinterpret_cast<element_type *>(y.data_ptr()), H, W); \
+    }
+
 // 1d index
 TORCH_BINDING_MAT_TRANSPOSE(f32_coalesced_read, torch::kFloat32, float, 1)
 TORCH_BINDING_MAT_TRANSPOSE(f32_coalesced_write, torch::kFloat32, float, 1)
@@ -315,8 +466,20 @@ TORCH_BINDING_MAT_TRANSPOSE_2D(f32x4_coalesced_read_2d, torch::kFloat32, float, 
 TORCH_BINDING_MAT_TRANSPOSE_2D(f32x4_coalesced_write_2d, torch::kFloat32, float, 4, 1)
 // TORCH_BINDING_MAT_TRANSPOSE_2D(f32_2d_2, torch::kFloat32, float, 1)
 // TORCH_BINDING_MAT_TRANSPOSE_2D(f32_2d_3, torch::kFloat32, float, 1)
-TORCH_BINDING_MAT_TRANSPOSE_2D(f32_2d_shared, torch::kFloat32, float, 1, 1)
-TORCH_BINDING_MAT_TRANSPOSE_2D(f32_2d_shared_2, torch::kFloat32, float, 1, 1)
+TORCH_BINDING_MAT_SHARED_TRANSPOSE_2D(shared, torch::kFloat32, float, 1, 1)
+TORCH_BINDING_MAT_SHARED_TRANSPOSE_2D(shared_2, torch::kFloat32, float, 1, 1)
+TORCH_BINDING_MAT_SHARED_TRANSPOSE_2D(shared, torch::kUInt8, uint8_t, 1, 1)
+TORCH_BINDING_MAT_SHARED_TRANSPOSE_2D(shared_2, torch::kUInt8, uint8_t, 1, 1)
+
+TORCH_BINDING_MAT_TRANSPOSE(u8_coalesced_read, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MAT_TRANSPOSE(u8_coalesced_write, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MAT_TRANSPOSE(u8x4_coalesced_read, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_MAT_TRANSPOSE(u8x4_coalesced_write, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_MAT_TRANSPOSE(u8x16_coalesced_write, torch::kUInt8, uint8_t, 16)
+
+TORCH_BINDING_MAT_TRANSPOSE_2D(u8x4_coalesced_read_2d, torch::kUInt8, uint8_t, 1, 4)
+TORCH_BINDING_MAT_TRANSPOSE_2D(u8x4_coalesced_write_2d, torch::kUInt8, uint8_t, 4, 1)
+TORCH_BINDING_MAT_TRANSPOSE_2D(u8x16_coalesced_write_2d, torch::kUInt8, uint8_t, 16, 1)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
@@ -331,6 +494,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(mat_transpose_f32x4_coalesced_write_2d)
     // TORCH_BINDING_COMMON_EXTENSION(mat_transpose_f32_2d_2)
     // TORCH_BINDING_COMMON_EXTENSION(mat_transpose_f32_2d_3)
-    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_f32_2d_shared)
-    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_f32_2d_shared_2)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_shared_float)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_shared_2_float)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_shared_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_shared_2_uint8_t)
+
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8_coalesced_read)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8_coalesced_write)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x4_coalesced_read)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x4_coalesced_write)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x16_coalesced_write)
+
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x4_coalesced_read_2d)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x4_coalesced_write_2d)
+    TORCH_BINDING_COMMON_EXTENSION(mat_transpose_u8x16_coalesced_write_2d)
 }

@@ -111,19 +111,36 @@ for H, W in Sizes:
     out = torch.randn((W, H), dtype=torch.float32).cuda().contiguous()
     
     run_benchmark(lib.mat_transpose_f32_coalesced_read, a, "f32_coalesced_read", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_read, a, "f32x4_coalesced_read", out)
     run_benchmark(lib.mat_transpose_f32_coalesced_write, a, "f32_coalesced_write", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_read, a, "f32x4_coalesced_read", out)
     run_benchmark(lib.mat_transpose_f32x4_coalesced_write, a, "f32x4_coalesced_write", out)
 
     run_benchmark(lib.mat_transpose_f32_coalesced_read_2d, a, "f32_coalesced_read_2d", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_read_2d, a, "f32x4_coalesced_read_2d", out)
     run_benchmark(lib.mat_transpose_f32_coalesced_write_2d, a, "f32_coalesced_write_2d", out)
+    run_benchmark(lib.mat_transpose_f32x4_coalesced_read_2d, a, "f32x4_coalesced_read_2d", out)
     run_benchmark(lib.mat_transpose_f32x4_coalesced_write_2d, a, "f32x4_coalesced_write_2d", out)
     # run_benchmark(lib.mat_transpose_f32_2d_1, a, "f32_2d_1", out)
     # run_benchmark(lib.mat_transpose_f32_2d_2, a, "f32_2d_2", out)
     # run_benchmark(lib.mat_transpose_f32_2d_3, a, "f32_2d_3", out)
-    run_benchmark(lib.mat_transpose_f32_2d_shared, a, "f32_2d_shared", out)
-    run_benchmark(lib.mat_transpose_f32_2d_shared_2, a, "f32_2d_shared_2", out)
+    run_benchmark(lib.mat_transpose_shared_float, a, "f32_shared", out)
+    run_benchmark(lib.mat_transpose_shared_2_float, a, "f32_shared_2", out)
+
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+    out = torch.zeros((W, H), dtype=torch.uint8).cuda().contiguous()
+
+    run_benchmark(lib.mat_transpose_u8_coalesced_read, a, "u8_coalesced_read", out)
+    run_benchmark(lib.mat_transpose_u8_coalesced_write, a, "u8_coalesced_write", out)
+    run_benchmark(lib.mat_transpose_u8x4_coalesced_read, a, "u8x4_coalesced_read", out)
+    run_benchmark(lib.mat_transpose_u8x4_coalesced_write, a, "u8x4_coalesced_write", out)
+    run_benchmark(lib.mat_transpose_u8x16_coalesced_write, a, "u8x16_coalesced_write", out)
+
+    run_benchmark(lib.mat_transpose_u8x4_coalesced_read_2d, a, "u8x4_coalesced_read_2d", out)
+    run_benchmark(lib.mat_transpose_u8x4_coalesced_write_2d, a, "u8x4_coalesced_write_2d", out)
+    run_benchmark(lib.mat_transpose_u8x16_coalesced_write_2d, a, "u8x16_coalesced_write_2d", out)
+
+    run_benchmark(lib.mat_transpose_shared_uint8_t, a, "u8_shared", out)
+    run_benchmark(lib.mat_transpose_shared_2_uint8_t, a, "u8_shared_2", out)
+
 
     print("-" * 85)
     
