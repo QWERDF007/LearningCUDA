@@ -68,14 +68,9 @@ def run_benchmark(
     kernel_tensor = torch.from_numpy(kernel).cuda().contiguous()
 
     if is_separable:
-        # 可分离版本：提取1D kernels
-        # 对于矩形结构元素，提取中间行和中间列
-        kernel_x = torch.from_numpy(kernel[ksh // 2, :]).cuda().contiguous()
-        kernel_y = torch.from_numpy(kernel[:, ksw // 2]).cuda().contiguous()
         
         for i in range(warmup):
-            # 参数顺序: src, dst, tmp, kernel_x, kernel_y, ksh, ksw
-            perf_func(a, out, tmp, kernel_x, kernel_y, ksh, ksw)
+            perf_func(a, out, tmp, tmpT, ksh, ksw)
     else:
         for i in range(warmup):
             perf_func(a, out, kernel_tensor, ksh, ksw)
@@ -86,7 +81,7 @@ def run_benchmark(
 
     if is_separable:
         for i in range(iters):
-            perf_func(a, out, tmp, kernel_x, kernel_y, ksh, ksw)
+            perf_func(a, out, tmp, tmpT, ksh, ksw)
     else:
         for i in range(iters):
             perf_func(a, out, kernel_tensor, ksh, ksw)
@@ -190,13 +185,14 @@ def run_benchmark(
 
 Hs = [4096]
 Ws = [46000]
-Sizes = [(H, W) for H in Hs for W in Ws]
+Ks = [11]
+Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
 
-for H, W in Sizes:
+for H, W, K in Sizes:
     print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}")
+    print(" " * 40 + f"H={H}, W={W}, K={K}")
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
@@ -205,7 +201,6 @@ for H, W in Sizes:
 
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.dilate_uint8_t_uint8_t, a, cv2.MORPH_DILATE, kernel, 'MORPH_DILATE', out)
-
 
     # out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     # run_benchmark(lib.erode_no_cond_uint8_t_uint8_t, a, cv2.MORPH_ERODE, kernel, 'MORPH_ERODE', out)
@@ -216,10 +211,115 @@ for H, W in Sizes:
     # out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     # run_benchmark(lib.erode_shared_uint8_t_uint8_t, a, cv2.MORPH_ERODE, kernel, 'MORPH_ERODE', out)
 
-    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
-    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
-    run_benchmark(lib.erode_separable_uint8_t_uint8_t, a, cv2.MORPH_ERODE, kernel, 'MORPH_ERODE', out, tmp, is_separable=True)
+    print("-" * 85)
 
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
-    run_benchmark(lib.dilate_separable_uint8_t_uint8_t, a, cv2.MORPH_DILATE, kernel, 'MORPH_DILATE', out, tmp, is_separable=True)
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_shared_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_SHARED  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_shared_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_SHARED DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable2_shared_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP2_SHARED  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable2_shared_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP2_SHARED DILATE', 
+        out, tmp, tmpT, is_separable=True)
+    
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_shared_vec4_u8_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_VEC4_CW  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_shared_vec4_u8_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_VEC4_CW DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable2_shared_vec4_u8_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP2_VEC4_CW  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable2_shared_vec4_u8_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP2_VEC4_CW DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+
+    print("-" * 85)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_T_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_T  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_T_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_T DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_T_shared_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_SHARED_T  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_T_shared_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_SHARED_T DILATE',
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_T_shared_vec4_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_VEC4_T  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_T_shared_vec4_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_VEC4_T DILATE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.erode_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_ERODE, kernel, 'SEP_VEC4_CW_T  ERODE', 
+        out, tmp, tmpT, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.dilate_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_VEC4_CW_T DILATE', 
+        out, tmp, tmpT, is_separable=True)
