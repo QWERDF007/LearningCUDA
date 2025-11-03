@@ -17,7 +17,7 @@ file = Path(__file__)
 
 # 构建编译所需的源文件列表
 sources = [
-    str(file.parent / "elementwise.cu")
+    str(file.parent / "elementwise_add.cu")
 ]
 
 extra_include_paths = [
@@ -27,7 +27,7 @@ extra_include_paths = [
 # 动态编译并加载CUDA核函数作为Python模块
 # 这种JIT（即时编译）方式允许在运行时编译CUDA代码
 lib = load(
-    name="elementwise_lib",                    # 模块名称
+    name="elementwise_add_lib",                    # 模块名称
     sources=sources,                           # CUDA源文件列表
     extra_include_paths=extra_include_paths,   # 添加头文件搜索路径
     extra_cuda_cflags=[                        # 额外的CUDA编译器标志
