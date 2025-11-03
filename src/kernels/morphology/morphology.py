@@ -54,6 +54,7 @@ def run_benchmark(
     tmp: Optional[torch.Tensor] = None,
     tmpT: Optional[torch.Tensor] = None,
     is_separable: bool = False,
+    is_high_level: bool = False,
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
@@ -68,23 +69,38 @@ def run_benchmark(
     kernel_tensor = torch.from_numpy(kernel).cuda().contiguous()
 
     if is_separable:
-        
-        for i in range(warmup):
-            perf_func(a, out, tmp, tmpT, ksh, ksw)
+        if is_high_level:
+            for i in range(warmup):
+                perf_func(a, out, tmp, tmpT, ksh, ksw)
+        else:
+            for i in range(warmup):
+                perf_func(a, out, tmp, tmpT, ksh, ksw)
     else:
-        for i in range(warmup):
-            perf_func(a, out, kernel_tensor, ksh, ksw)
+        if is_high_level:
+            for i in range(warmup):
+                perf_func(a, out, tmp, kernel_tensor, ksh, ksw)
+        else:
+            for i in range(warmup):
+                perf_func(a, out, kernel_tensor, ksh, ksw)
     
     torch.cuda.synchronize()
     
     start = time.time()
 
     if is_separable:
-        for i in range(iters):
-            perf_func(a, out, tmp, tmpT, ksh, ksw)
+        if is_high_level:
+            for i in range(iters):
+                perf_func(a, out, tmp, tmpT, ksh, ksw)
+        else:
+            for i in range(iters):
+                perf_func(a, out, tmp, tmpT, ksh, ksw)
     else:
-        for i in range(iters):
-            perf_func(a, out, kernel_tensor, ksh, ksw)
+        if is_high_level:
+            for i in range(iters):
+                perf_func(a, out, tmp, kernel_tensor, ksh, ksw)
+        else:
+            for i in range(iters):
+                perf_func(a, out, kernel_tensor, ksh, ksw)
         
     torch.cuda.synchronize()
     
@@ -183,16 +199,8 @@ def run_benchmark(
     
     return out, mean_time, tag
 
-Hs = [4096]
-Ws = [46000]
-Ks = [11]
-Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
-
-for H, W, K in Sizes:
-    print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}, K={K}")
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
+def basic_test(H, W, kernel):
+    
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
@@ -323,3 +331,89 @@ for H, W, K in Sizes:
     tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
     run_benchmark(lib.dilate_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_DILATE, kernel, 'SEP_VEC4_CW_T DILATE', 
         out, tmp, tmpT, is_separable=True)
+
+def open_close_test(H, W, kernel):
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_uint8_t_uint8_t, a, cv2.MORPH_OPEN, kernel, 'MORPH_OPEN', out, tmp, is_high_level=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_uint8_t_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'MORPH_CLOSE', out, tmp, is_high_level=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_separable_uint8_t, a, cv2.MORPH_OPEN, kernel, 'SEP  OPEN', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_separable_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP CLOSE', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_separable_shared_uint8_t, a, cv2.MORPH_OPEN, kernel, 'SEP_SHARED  OPEN', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_separable_shared_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP_SHARED CLOSE', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_separable2_shared_uint8_t, a, cv2.MORPH_OPEN, kernel, 'SEP2_SHARED  OPEN', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_separable2_shared_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP2_SHARED CLOSE', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_separable_shared_vec4_u8_uint8_t, a, cv2.MORPH_OPEN, kernel, 'SEP_VEC4_CW  OPEN', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_separable_shared_vec4_u8_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP_VEC4_CW CLOSE', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+    
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.open_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_OPEN, kernel, 'SEP_VEC4_CW_T  OPEN', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.close_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP_VEC4_CW_T CLOSE', out, tmp, tmpT, 
+        is_high_level=True, is_separable=True)
+
+Hs = [4096]
+Ws = [46000]
+Ks = [11]
+Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
+
+for H, W, K in Sizes:
+    print("-" * 85)
+    print(" " * 40 + f"H={H}, W={W}, K={K}")
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
+
+    # basic_test(H, W, kernel)
+    open_close_test(H, W, kernel)
+    

@@ -1179,6 +1179,638 @@ __global__ void mat_transpose_u8x16_coalesced_write_2d_kernel(uint8_t *A, uint8_
         }                                                                                                          \
     }
 
+/***************************** OPEN & CLOSE ************************************/
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN(tag, th_type, element_type, kernel_type, n_pack)                              \
+    void tag##_##element_type##_##kernel_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,              \
+                                              torch::Tensor kernel, const int ksh, const int ksw)                   \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(kernel)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MinOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MinOp<element_type>, 3><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 3><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE(tag, th_type, element_type, kernel_type, n_pack)                             \
+    void tag##_##element_type##_##kernel_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,              \
+                                              torch::Tensor kernel, const int ksh, const int ksw)                   \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(kernel)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 3><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MinOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MinOp<element_type>, 3><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE(tag, th_type, element_type, n_pack)                                  \
+    void tag##_separable_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp, torch::Tensor tmpT, \
+                                        const int ksh, const int ksw)                                                \
+    {                                                                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                              \
+        const int H  = src.size(0);                                                                                  \
+        const int W  = src.size(1);                                                                                  \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
+        const int N  = H * W;                                                                                        \
+                                                                                                                     \
+        dim3 block1(THREADS);                                                                                        \
+        dim3 grid1(divUp(N, THREADS));                                                                               \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                     \
+        if (CH == 1)                                                                                                 \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MinOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(src.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MinOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N);                \
+        }                                                                                                            \
+        else if (CH == 3)                                                                                            \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MinOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(src.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MinOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N);                \
+        }                                                                                                            \
+        if (CH == 1)                                                                                                 \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MaxOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                               \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);                 \
+        }                                                                                                            \
+        else if (CH == 3)                                                                                            \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MaxOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                               \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);                 \
+        }                                                                                                            \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE(tag, th_type, element_type, n_pack)                                 \
+    void tag##_separable_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp, torch::Tensor tmpT, \
+                                        const int ksh, const int ksw)                                                \
+    {                                                                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                              \
+        const int H  = src.size(0);                                                                                  \
+        const int W  = src.size(1);                                                                                  \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
+        const int N  = H * W;                                                                                        \
+                                                                                                                     \
+        dim3 block1(THREADS);                                                                                        \
+        dim3 grid1(divUp(N, THREADS));                                                                               \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                     \
+        if (CH == 1)                                                                                                 \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MaxOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(src.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N);                \
+        }                                                                                                            \
+        else if (CH == 3)                                                                                            \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MaxOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(src.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N);                \
+        }                                                                                                            \
+        if (CH == 1)                                                                                                 \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MinOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                               \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MinOp<element_type>, 1>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);                 \
+        }                                                                                                            \
+        else if (CH == 3)                                                                                            \
+        {                                                                                                            \
+            morphology_h_kernel<element_type, MinOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                               \
+                                    reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);                 \
+            morphology_v_kernel<element_type, MinOp<element_type>, 3>                                                \
+                <<<grid1, block1>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                    reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);                 \
+        }                                                                                                            \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED(tag, kname, th_type, element_type, n_pack)                    \
+    void tag##_separable_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,           \
+                                                  torch::Tensor tmpT, const int ksh, const int ksw)                  \
+    {                                                                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                              \
+        const int H  = src.size(0);                                                                                  \
+        const int W  = src.size(1);                                                                                  \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
+        const int N  = H * W;                                                                                        \
+                                                                                                                     \
+        dim3   block(THREADS);                                                                                       \
+        dim3   gridH(divUp(W, block.x *n_pack), H);                                                                  \
+        dim3   gridV(W, divUp(H, block.x *n_pack));                                                                  \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                    \
+        size_t smem_v_size = (block.x * n_pack + ksh - 1) * sizeof(element_type);                                    \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                     \
+        {                                                                                                            \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                         \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MinOp<element_type>>                                         \
+                <<<gridV, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N); \
+        }                                                                                                            \
+        {                                                                                                            \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                         \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MaxOp<element_type>>                                         \
+                <<<gridV, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);  \
+        }                                                                                                            \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED(tag, kname, th_type, element_type, n_pack)                   \
+    void tag##_separable_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,           \
+                                                  torch::Tensor tmpT, const int ksh, const int ksw)                  \
+    {                                                                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                     \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                               \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                              \
+        const int H  = src.size(0);                                                                                  \
+        const int W  = src.size(1);                                                                                  \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                             \
+        const int N  = H * W;                                                                                        \
+                                                                                                                     \
+        dim3   block(THREADS);                                                                                       \
+        dim3   gridH(divUp(W, block.x *n_pack), H);                                                                  \
+        dim3   gridV(W, divUp(H, block.x *n_pack));                                                                  \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                    \
+        size_t smem_v_size = (block.x * n_pack + ksh - 1) * sizeof(element_type);                                    \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                     \
+        {                                                                                                            \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                         \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MaxOp<element_type>>                                         \
+                <<<gridV, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N); \
+        }                                                                                                            \
+        {                                                                                                            \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                         \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MinOp<element_type>>                                         \
+                <<<gridV, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                   reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);  \
+        }                                                                                                            \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE2_SHARED(tag, kname, th_type, element_type, n_pack)                  \
+    void tag##_separable2_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,         \
+                                                   torch::Tensor tmpT, const int ksh, const int ksw)                \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                             \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+                                                                                                                    \
+        dim3   block(THREADS);                                                                                      \
+        dim3   gridH(divUp(W, block.x *n_pack), H);                                                                 \
+        dim3   gridV(divUp(N, THREADS));                                                                            \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                   \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                    \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            morphology_v_kernel<element_type, MinOp<element_type>, 1>                                               \
+                <<<gridV, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                   reinterpret_cast<element_type *>(tmpT.data_ptr()), ksh, H, W, N);                \
+        }                                                                                                           \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 1>                                               \
+                <<<gridV, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                   reinterpret_cast<element_type *>(dst.data_ptr()), ksh, H, W, N);                 \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE2_SHARED(tag, kname, th_type, element_type, n_pack)                 \
+    void tag##_separable2_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,         \
+                                                   torch::Tensor tmpT, const int ksh, const int ksw)                \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                             \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+                                                                                                                    \
+        dim3   block(THREADS);                                                                                      \
+        dim3   gridH(divUp(W, block.x *n_pack), H);                                                                 \
+        dim3   gridV(divUp(N, THREADS));                                                                            \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                   \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                    \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 1>                                               \
+                <<<gridV, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                   reinterpret_cast<element_type *>(tmpT.data_ptr()), ksh, H, W, N);                \
+        }                                                                                                           \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<gridH, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                   reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            morphology_v_kernel<element_type, MinOp<element_type>, 1>                                               \
+                <<<gridV, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                                \
+                                   reinterpret_cast<element_type *>(dst.data_ptr()), ksh, H, W, N);                 \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED_VEC(tag, kname, th_type, element_type, n_pack)               \
+    void tag##_separable_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,          \
+                                                  torch::Tensor tmpT, const int ksh, const int ksw)                 \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                             \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+                                                                                                                    \
+        dim3   block(THREADS);                                                                                      \
+        dim3   grid(divUp(W, block.x *n_pack), H);                                                                  \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                   \
+        size_t smem_v_size = (block.x * n_pack) * ksh * sizeof(element_type);                                       \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                    \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<grid, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<grid, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N); \
+        }                                                                                                           \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<grid, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                \
+                                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<grid, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);  \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED_VEC(tag, kname, th_type, element_type, n_pack)              \
+    void tag##_separable_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,          \
+                                                  torch::Tensor tmpT, const int ksh, const int ksw)                 \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                   \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                             \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+                                                                                                                    \
+        dim3   block(THREADS);                                                                                      \
+        dim3   grid(divUp(W, block.x *n_pack), H);                                                                  \
+        size_t smem_h_size = (block.x * n_pack + ksw - 1) * sizeof(element_type);                                   \
+        size_t smem_v_size = (block.x * n_pack) * ksh * sizeof(element_type);                                       \
+        /* First pass: horizontal morphology on original image -> tmp (H x W) */                                    \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<grid, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MaxOp<element_type>>                                        \
+                <<<grid, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N); \
+        }                                                                                                           \
+        {                                                                                                           \
+            morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<grid, block, smem_h_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),                \
+                                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);  \
+            morphology_v_##kname##_kernel<element_type, MinOp<element_type>>                                        \
+                <<<grid, block, smem_v_size, 0>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                 \
+                                                  reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);  \
+        }                                                                                                           \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED_T(tag, kname, th_type, element_type, n_pack)                    \
+    void tag##_separable_T_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,           \
+                                                    torch::Tensor tmpT, const int ksh, const int ksw)                  \
+    {                                                                                                                  \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                                 \
+        const int H  = src.size(0);                                                                                    \
+        const int W  = src.size(1);                                                                                    \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
+        const int N  = H * W;                                                                                          \
+        {                                                                                                              \
+            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
+            {                                                                                                          \
+                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
+            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), W, H);  \
+            }                                                                                                          \
+        }                                                                                                              \
+        {                                                                                                              \
+            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
+            {                                                                                                          \
+                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
+            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), W, H);   \
+            }                                                                                                          \
+        }                                                                                                              \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED_T(tag, kname, th_type, element_type, n_pack)                   \
+    void tag##_separable_T_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,           \
+                                                    torch::Tensor tmpT, const int ksh, const int ksw)                  \
+    {                                                                                                                  \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                                 \
+        const int H  = src.size(0);                                                                                    \
+        const int W  = src.size(1);                                                                                    \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
+        const int N  = H * W;                                                                                          \
+        {                                                                                                              \
+            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
+            {                                                                                                          \
+                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
+            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), W, H);  \
+            }                                                                                                          \
+        }                                                                                                              \
+        {                                                                                                              \
+            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
+            {                                                                                                          \
+                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
+            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+                                                                                                                       \
+            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), W, H);   \
+            }                                                                                                          \
+        }                                                                                                              \
+    }
+
 TORCH_BINDING_MORPHOLOGY(erode, torch::kUInt8, uint8_t, uint8_t, MinOp<uint8_t>, 1)
 TORCH_BINDING_MORPHOLOGY(dilate, torch::kUInt8, uint8_t, uint8_t, MaxOp<uint8_t>, 1)
 
@@ -1215,6 +1847,26 @@ TORCH_BINDING_MORPHOLOGY_SEPARABLE_SHARED_T(dilate, shared_vec4, torch::kUInt8, 
 TORCH_BINDING_MORPHOLOGY_SEPARABLE_SHARED_T(erode, shared_vec4_u8, torch::kUInt8, uint8_t, MinOp<uint8_t>, 4)
 TORCH_BINDING_MORPHOLOGY_SEPARABLE_SHARED_T(dilate, shared_vec4_u8, torch::kUInt8, uint8_t, MaxOp<uint8_t>, 4)
 
+/***************************** OPEN & CLOSE ************************************/
+
+TORCH_BINDING_MORPHOLOGY_OPEN(open, torch::kUInt8, uint8_t, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_CLOSE(close, torch::kUInt8, uint8_t, uint8_t, 1)
+
+TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE(open, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE(close, torch::kUInt8, uint8_t, 1)
+
+TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED(open, shared, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED(close, shared, torch::kUInt8, uint8_t, 1)
+
+TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE2_SHARED(open, shared, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE2_SHARED(close, shared, torch::kUInt8, uint8_t, 1)
+
+TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED_VEC(open, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED_VEC(close, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
+
+TORCH_BINDING_MORPHOLOGY_OPEN_SEPARABLE_SHARED_T(open, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_MORPHOLOGY_CLOSE_SEPARABLE_SHARED_T(close, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(erode_uint8_t_uint8_t)
@@ -1243,4 +1895,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(dilate_separable_T_shared_vec4_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(erode_separable_T_shared_vec4_u8_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(dilate_separable_T_shared_vec4_u8_uint8_t)
+
+    TORCH_BINDING_COMMON_EXTENSION(open_uint8_t_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_uint8_t_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(open_separable_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_separable_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(open_separable_shared_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_separable_shared_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(open_separable2_shared_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_separable2_shared_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(open_separable_shared_vec4_u8_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_separable_shared_vec4_u8_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(open_separable_T_shared_vec4_u8_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(close_separable_T_shared_vec4_u8_uint8_t)
 }
