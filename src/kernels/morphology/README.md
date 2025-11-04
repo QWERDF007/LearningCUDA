@@ -26,6 +26,7 @@
 -------------------------------------------------------------------------------------
                MORPH_OPEN: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 23915.2865ms, avg: 23.9153ms
               MORPH_CLOSE: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 23938.6795ms, avg: 23.9387ms
+-------------------------------------------------------------------------------------
                 SEP  OPEN: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 5351.8186ms, avg: 5.3518ms
                 SEP CLOSE: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 5359.9167ms, avg: 5.3599ms
          SEP_SHARED  OPEN: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 19692.2171ms, avg: 19.6922ms
@@ -36,4 +37,12 @@
         SEP_VEC4_CW CLOSE: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 4980.7684ms, avg: 4.9808ms
       SEP_VEC4_CW_T  OPEN: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 3965.0764ms, avg: 3.9651ms
       SEP_VEC4_CW_T CLOSE: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 3963.5701ms, avg: 3.9636ms
+-------------------------------------------------------------------------------------
+             MORPH_TOPHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 24786.9868ms, avg: 24.7870ms
+           MORPH_BLACKHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 24847.9991ms, avg: 24.8480ms
+-------------------------------------------------------------------------------------
+             SEP   TOPHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 6109.7326ms, avg: 6.1097ms
+             SEP BLACKHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 6108.2690ms, avg: 6.1083ms
+   SEP_VEC4_CW_T   TOPHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 4821.5554ms, avg: 4.8216ms
+   SEP_VEC4_CW_T BLACKHAT: passed: 1e-8, 1e-1: 0%, 1e-3: 0%, 1e-6: 0%, iters: 1000, time: 4824.5616ms, avg: 4.8246ms
 -------------------------------------------------------------------------------------
