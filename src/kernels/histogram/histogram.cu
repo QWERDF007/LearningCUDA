@@ -124,38 +124,41 @@ __global__ void histogram_i32x4_kernel(int32_t *in, int32_t *out, const int N)
  * @param out 输出直方图数组指针
  * @param N 输入数据总数
  */
-__global__ void histogram_u8x4_kernel_shared(const uint8_t *in, int32_t *out, const int N)
+__global__ void histogram_u8x4_kernel_shared(const uint8_t *__restrict__ src, int32_t *dst, const int N)
 {
-    __shared__ int local_hist[256];
+    // 每个线程处理多个元素
+    int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
+    if (idx >= N)
+        return;
+
+    __shared__ uint32_t s_hist[256];
 
     // 初始化共享直方图
     for (int i = threadIdx.x; i < 256; i += blockDim.x)
     {
-        local_hist[i] = 0;
+        s_hist[i] = 0;
     }
     __syncthreads();
 
-    // 每个线程处理多个元素
-    int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
     for (; idx + 3 < N; idx += 4 * blockDim.x * gridDim.x)
     {
-        uchar4 v = *reinterpret_cast<const uchar4 *>(&in[idx]);
-        atomicAdd(&local_hist[v.x], 1);
-        atomicAdd(&local_hist[v.y], 1);
-        atomicAdd(&local_hist[v.z], 1);
-        atomicAdd(&local_hist[v.w], 1);
+        uchar4 v = *reinterpret_cast<const uchar4 *>(&src[idx]);
+        atomicAdd(&s_hist[v.x], 1);
+        atomicAdd(&s_hist[v.y], 1);
+        atomicAdd(&s_hist[v.z], 1);
+        atomicAdd(&s_hist[v.w], 1);
     }
     // 处理剩余元素
     for (; idx < N; idx++)
     {
-        atomicAdd(&local_hist[in[idx]], 1);
+        atomicAdd(&s_hist[src[idx]], 1);
     }
     __syncthreads();
 
     // 将共享直方图写回全局
     for (int i = threadIdx.x; i < 256; i += blockDim.x)
     {
-        atomicAdd(&out[i], local_hist[i]);
+        atomicAdd(&dst[i], s_hist[i]);
     }
 }
 
@@ -174,8 +177,8 @@ torch::Tensor histogram_u8x4_shared(torch::Tensor in)
     const int H = in.size(0);
     const int W = in.size(1);
     const int N = H * W;
-    dim3      block(THREADS / 4);
-    dim3      grid(divUp(N, THREADS));
+    dim3      block(THREADS);
+    dim3      grid(divUp(N, THREADS * 4));
     histogram_u8x4_kernel_shared<<<grid, block>>>(reinterpret_cast<uint8_t *>(in.data_ptr()),
                                                   reinterpret_cast<int32_t *>(out.data_ptr()), N);
     return out;
@@ -274,6 +277,25 @@ torch::Tensor histogram_u8x4_warp(torch::Tensor in)
     return out;
 }
 
+#define TORCH_BINDING_HISTOGRAM_U8(packed_type, torch_type, element_type, n_elements)                      \
+    torch::Tensor histogram_##packed_type(torch::Tensor in)                                                \
+    {                                                                                                      \
+        CHECK_TORCH_TENSOR_DTYPE(in, torch_type)                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(in)                                                                      \
+                                                                                                           \
+        auto          options = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA, 0);       \
+        torch::Tensor out     = torch::zeros({256}, options);                                              \
+                                                                                                           \
+        const int H = in.size(0);                                                                          \
+        const int W = in.size(1);                                                                          \
+        const int N = H * W;                                                                               \
+        dim3      block(THREADS);                                                                          \
+        dim3      grid(divUp(N, THREADS *n_elements));                                                     \
+        histogram_##packed_type##_kernel<<<grid, block>>>(reinterpret_cast<element_type *>(in.data_ptr()), \
+                                                          reinterpret_cast<int32_t *>(out.data_ptr()), N); \
+        return out;                                                                                        \
+    }
+
 #define TORCH_BINDING_HISTOGRAM(packed_type, torch_type, element_type, n_elements)                         \
     torch::Tensor histogram_##packed_type(torch::Tensor in)                                                \
     {                                                                                                      \
@@ -288,11 +310,30 @@ torch::Tensor histogram_u8x4_warp(torch::Tensor in)
         const int H = in.size(0);                                                                          \
         const int W = in.size(1);                                                                          \
         const int N = H * W;                                                                               \
-        dim3      block(THREADS / n_elements);                                                             \
-        dim3      grid(divUp(N, THREADS));                                                                 \
+        dim3      block(THREADS);                                                                          \
+        dim3      grid(divUp(N, THREADS *n_elements));                                                     \
         histogram_##packed_type##_kernel<<<grid, block>>>(reinterpret_cast<element_type *>(in.data_ptr()), \
                                                           reinterpret_cast<int32_t *>(out.data_ptr()), N); \
         return out;                                                                                        \
+    }
+
+#define TORCH_BINDING_HISTOGRAM_2D_U8(packed_type, torch_type, element_type, n_elements)                        \
+    torch::Tensor histogram_##packed_type##_2D(torch::Tensor in)                                                \
+    {                                                                                                           \
+        CHECK_TORCH_TENSOR_DTYPE(in, torch_type)                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(in)                                                                           \
+                                                                                                                \
+        auto          options = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA, 0);            \
+        torch::Tensor out     = torch::zeros({256}, options);                                                   \
+                                                                                                                \
+        const int H = in.size(0);                                                                               \
+        const int W = in.size(1);                                                                               \
+        const int N = H * W;                                                                                    \
+        dim3      block(BLOCK_SIZE_X, BLOCK_SIZE_Y);                                                            \
+        dim3      grid(divUp(W, block.x *n_elements), divUp(H, block.y));                                       \
+        histogram_##packed_type##_kernel2D<<<grid, block>>>(reinterpret_cast<element_type *>(in.data_ptr()),    \
+                                                            reinterpret_cast<int32_t *>(out.data_ptr()), H, W); \
+        return out;                                                                                             \
     }
 
 #define TORCH_BINDING_HISTOGRAM_2D(packed_type, torch_type, element_type, n_elements)                           \
@@ -316,12 +357,12 @@ torch::Tensor histogram_u8x4_warp(torch::Tensor in)
         return out;                                                                                             \
     }
 
-TORCH_BINDING_HISTOGRAM(u8, torch::kUInt8, uint8_t, 1)
-TORCH_BINDING_HISTOGRAM(u8x4, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_HISTOGRAM_U8(u8, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_HISTOGRAM_U8(u8x4, torch::kUInt8, uint8_t, 4)
 TORCH_BINDING_HISTOGRAM(i32, torch::kInt32, int32_t, 1)
 TORCH_BINDING_HISTOGRAM(i32x4, torch::kInt32, int32_t, 4)
-TORCH_BINDING_HISTOGRAM_2D(u8, torch::kUInt8, uint8_t, 1)
-TORCH_BINDING_HISTOGRAM_2D(u8x4, torch::kUInt8, uint8_t, 4)
+TORCH_BINDING_HISTOGRAM_2D_U8(u8, torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_HISTOGRAM_2D_U8(u8x4, torch::kUInt8, uint8_t, 4)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
