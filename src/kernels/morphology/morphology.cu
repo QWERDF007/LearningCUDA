@@ -1863,11 +1863,11 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
         }                                                                                                             \
         {                                                                                                             \
             morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 1><<<grid, block>>>(                    \
-                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(tmpT.data_ptr()),  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                               \
         }                                                                                                             \
         elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                                  \
-            reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmpT.data_ptr()),      \
+            reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),       \
             reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                     \
     }
 
@@ -1897,11 +1897,11 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
         }                                                                                                             \
         {                                                                                                             \
             morphology_kernel<element_type, kernel_type, MinOp<element_type>, 1><<<grid, block>>>(                    \
-                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(tmpT.data_ptr()),  \
+                reinterpret_cast<element_type *>(tmp.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()),   \
                 reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                               \
         }                                                                                                             \
         elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                                  \
-            reinterpret_cast<element_type *>(tmpT.data_ptr()), reinterpret_cast<element_type *>(src.data_ptr()),      \
+            reinterpret_cast<element_type *>(dst.data_ptr()), reinterpret_cast<element_type *>(src.data_ptr()),       \
             reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                     \
     }
 
@@ -2004,7 +2004,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
         const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
         const int N  = H * W;                                                                                          \
         {                                                                                                              \
-            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
             {                                                                                                          \
                 dim3   block1(THREADS);                                                                                \
                 dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
@@ -2013,18 +2012,12 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
             {                                                                                                          \
-                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
                 dim3 tblock(32, 1);                                                                                    \
                 dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
                 mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
                     reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
             }                                                                                                          \
-                                                                                                                       \
-            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
-            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
             {                                                                                                          \
                 dim3   block2(THREADS);                                                                                \
                 dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
@@ -2033,8 +2026,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
             {                                                                                                          \
                 dim3 tblock2(32, 1);                                                                                   \
                 dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
@@ -2043,7 +2034,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
             }                                                                                                          \
         }                                                                                                              \
         {                                                                                                              \
-            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
             {                                                                                                          \
                 dim3   block1(THREADS);                                                                                \
                 dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
@@ -2052,18 +2042,12 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
             {                                                                                                          \
-                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
                 dim3 tblock(32, 1);                                                                                    \
                 dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
                 mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
                     reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
             }                                                                                                          \
-                                                                                                                       \
-            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
-            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
             {                                                                                                          \
                 dim3   block2(THREADS);                                                                                \
                 dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
@@ -2072,8 +2056,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
             {                                                                                                          \
                 dim3 tblock2(32, 1);                                                                                   \
                 dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
@@ -2103,7 +2085,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
         const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
         const int N  = H * W;                                                                                          \
         {                                                                                                              \
-            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
             {                                                                                                          \
                 dim3   block1(THREADS);                                                                                \
                 dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
@@ -2112,18 +2093,12 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
             {                                                                                                          \
-                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
                 dim3 tblock(32, 1);                                                                                    \
                 dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
                 mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
                     reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
             }                                                                                                          \
-                                                                                                                       \
-            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
-            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
             {                                                                                                          \
                 dim3   block2(THREADS);                                                                                \
                 dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
@@ -2132,8 +2107,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
             {                                                                                                          \
                 dim3 tblock2(32, 1);                                                                                   \
                 dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
@@ -2142,7 +2115,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
             }                                                                                                          \
         }                                                                                                              \
         {                                                                                                              \
-            /* First pass: horizontal morphology on original image -> tmp (H x W) */                                   \
             {                                                                                                          \
                 dim3   block1(THREADS);                                                                                \
                 dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
@@ -2151,18 +2123,12 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose tmp (H x W) -> tmpT (W x H) */                                                                \
             {                                                                                                          \
-                /* configure transpose kernel: each y-thread handles 16 rows */                                        \
                 dim3 tblock(32, 1);                                                                                    \
                 dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
                 mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
                     reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
             }                                                                                                          \
-                                                                                                                       \
-            /* Second pass: apply horizontal morphology on transposed image (effectively vertical on original) */      \
-            /* when transposed, H' = W, W' = H, use kernel_y as horizontal SE with size ksh */                         \
             {                                                                                                          \
                 dim3   block2(THREADS);                                                                                \
                 dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
@@ -2171,8 +2137,6 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
                     <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
                                                       reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
             }                                                                                                          \
-                                                                                                                       \
-            /* Transpose back tmp (now holds transposed final result W x H) -> dst (H x W) */                          \
             {                                                                                                          \
                 dim3 tblock2(32, 1);                                                                                   \
                 dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
@@ -2184,6 +2148,163 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
         dim3 grid(divUp(N, THREADS));                                                                                  \
         elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                                   \
             reinterpret_cast<element_type *>(tmpT.data_ptr()), reinterpret_cast<element_type *>(src.data_ptr()),       \
+            reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                      \
+    }
+
+/***************************** GRADIENT ************************************/
+
+#define TORCH_BINDING_MORPHOLOGY_GRADIENT(th_type, element_type, kernel_type, n_pack)                               \
+    void gradient_##element_type##_##kernel_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,           \
+                                                 torch::Tensor tmpT, torch::Tensor kernel, const int ksh,           \
+                                                 const int ksw)                                                     \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(kernel)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                              \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MinOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        {                                                                                                           \
+            morphology_kernel<element_type, kernel_type, MaxOp<element_type>, 1><<<grid, block>>>(                  \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                                \
+            reinterpret_cast<element_type *>(dst.data_ptr()), reinterpret_cast<element_type *>(tmp.data_ptr()),     \
+            reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                   \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE(th_type, element_type, n_pack)                               \
+    void gradient_separable_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,              \
+                                           torch::Tensor tmpT, const int ksh, const int ksw)                     \
+    {                                                                                                            \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                 \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                 \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                 \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                           \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                          \
+        const int H  = src.size(0);                                                                              \
+        const int W  = src.size(1);                                                                              \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                         \
+        const int N  = H * W;                                                                                    \
+                                                                                                                 \
+        dim3 block(THREADS);                                                                                     \
+        dim3 grid(divUp(N, THREADS));                                                                            \
+        {                                                                                                        \
+            morphology_h_kernel<element_type, MinOp<element_type>, 1>                                            \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),                              \
+                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);               \
+            morphology_v_kernel<element_type, MinOp<element_type>, 1>                                            \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                              \
+                                  reinterpret_cast<element_type *>(tmpT.data_ptr()), ksw, H, W, N);              \
+        }                                                                                                        \
+        {                                                                                                        \
+            morphology_h_kernel<element_type, MaxOp<element_type>, 1>                                            \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),                              \
+                                  reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N);               \
+            morphology_v_kernel<element_type, MaxOp<element_type>, 1>                                            \
+                <<<grid, block>>>(reinterpret_cast<element_type *>(tmp.data_ptr()),                              \
+                                  reinterpret_cast<element_type *>(dst.data_ptr()), ksw, H, W, N);               \
+        }                                                                                                        \
+        elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                             \
+            reinterpret_cast<element_type *>(dst.data_ptr()), reinterpret_cast<element_type *>(tmpT.data_ptr()), \
+            reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                \
+    }
+
+#define TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE_SHARED_T(kname, th_type, element_type, n_pack)                     \
+    void gradient_separable_T_##kname##_##element_type(torch::Tensor src, torch::Tensor dst, torch::Tensor tmp,        \
+                                                       torch::Tensor tmpT, const int ksh, const int ksw)               \
+    {                                                                                                                  \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(tmp, (th_type))                                                                       \
+        CHECK_TORCH_TENSOR_DTYPE(tmpT, (th_type))                                                                      \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(tmp)                                                                                 \
+        CHECK_TORCH_TENSOR_DEVICE(tmpT)                                                                                \
+        const int H  = src.size(0);                                                                                    \
+        const int W  = src.size(1);                                                                                    \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                               \
+        const int N  = H * W;                                                                                          \
+        {                                                                                                              \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), H, W);  \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MinOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(tmpT.data_ptr()),               \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(tmpT.data_ptr()), W, H);  \
+            }                                                                                                          \
+        }                                                                                                              \
+        {                                                                                                              \
+            {                                                                                                          \
+                dim3   block1(THREADS);                                                                                \
+                dim3   grid1(divUp(W, block1.x *n_pack), H);                                                           \
+                size_t smem_size = (block1.x * n_pack + ksw - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid1, block1, smem_size, 0>>>(reinterpret_cast<element_type *>(src.data_ptr()),                \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksw, H, W, N); \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3 tblock(32, 1);                                                                                    \
+                dim3 tgrid(divUp(W, tblock.x), divUp(H, 16));                                                          \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid, tblock>>>(                                      \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), H, W);   \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3   block2(THREADS);                                                                                \
+                dim3   grid2(divUp(H, block2.x *n_pack), W);                                                           \
+                size_t smem_size = (block2.x * n_pack + ksh - 1) * sizeof(element_type);                               \
+                morphology_h_##kname##_kernel<element_type, MaxOp<element_type>>                                       \
+                    <<<grid2, block2, smem_size, 0>>>(reinterpret_cast<element_type *>(dst.data_ptr()),                \
+                                                      reinterpret_cast<element_type *>(tmp.data_ptr()), ksh, W, H, N); \
+            }                                                                                                          \
+            {                                                                                                          \
+                dim3 tblock2(32, 1);                                                                                   \
+                dim3 tgrid2(divUp(H, tblock2.x), divUp(W, 16));                                                        \
+                mat_transpose_u8x16_coalesced_write_2d_kernel<<<tgrid2, tblock2>>>(                                    \
+                    reinterpret_cast<uint8_t *>(tmp.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), W, H);   \
+            }                                                                                                          \
+        }                                                                                                              \
+        dim3 block(THREADS);                                                                                           \
+        dim3 grid(divUp(N, THREADS));                                                                                  \
+        elementwise_sub_32bit_kernel<element_type><<<grid, block>>>(                                                   \
+            reinterpret_cast<element_type *>(dst.data_ptr()), reinterpret_cast<element_type *>(tmpT.data_ptr()),       \
             reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                      \
     }
 
@@ -2253,6 +2374,11 @@ TORCH_BINDING_MORPHOLOGY_BLACKHAT_SEPARABLE(blackhat, torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_MORPHOLOGY_TOPHAT_SEPARABLE_SHARED_T(tophat, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
 TORCH_BINDING_MORPHOLOGY_BLACKHAT_SEPARABLE_SHARED_T(blackhat, shared_vec4_u8, torch::kUInt8, uint8_t, 4)
 
+/***************************** GRADIENT ************************************/
+TORCH_BINDING_MORPHOLOGY_GRADIENT(torch::kUInt8, uint8_t, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE(torch::kUInt8, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE_SHARED_T(shared_vec4_u8, torch::kUInt8, uint8_t, 4)
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(erode_uint8_t_uint8_t)
@@ -2301,4 +2427,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(blackhat_separable_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(tophat_separable_T_shared_vec4_u8_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(blackhat_separable_T_shared_vec4_u8_uint8_t)
+
+    TORCH_BINDING_COMMON_EXTENSION(gradient_uint8_t_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(gradient_separable_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(gradient_separable_T_shared_vec4_u8_uint8_t)
 }

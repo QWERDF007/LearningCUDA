@@ -213,8 +213,6 @@ def run_benchmark(
     return out, mean_time, tag
 
 def basic_test(H, W, kernel):
-    
-
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
@@ -416,7 +414,6 @@ def open_close_test(H, W, kernel):
     run_benchmark(lib.close_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_CLOSE, kernel, 'SEP_VEC4_CW_T CLOSE', out, tmp, tmpT, 
         is_open_close=True, is_separable=True)
 
-
 def tophat_blackhat_test(H, W, kernel):
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
 
@@ -454,6 +451,27 @@ def tophat_blackhat_test(H, W, kernel):
     run_benchmark(lib.blackhat_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_BLACKHAT, kernel, 'SEP_VEC4_CW_T BLACKHAT', out, tmp, tmpT, 
         is_tophat_blackhat=True, is_separable=True)
 
+def gradient_test(H, W, kernel):
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.gradient_uint8_t_uint8_t, a, cv2.MORPH_GRADIENT, kernel, 'MORPH_GRADIENT', out, tmp, tmpT, is_tophat_blackhat=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.gradient_separable_uint8_t, a, cv2.MORPH_GRADIENT, kernel, 'SEP GRADIENT', out, tmp, tmpT, 
+        is_tophat_blackhat=True, is_separable=True)
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmp = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    tmpT = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.gradient_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_GRADIENT, kernel, 'SEP_VEC4_CW_T GRADIENT', out, tmp, tmpT, 
+        is_tophat_blackhat=True, is_separable=True)
+
+
 Hs = [4096]
 Ws = [46000]
 Ks = [11]
@@ -466,6 +484,7 @@ for H, W, K in Sizes:
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
 
     # basic_test(H, W, kernel)
-    # open_close_test(H, W, kernel)
-    tophat_blackhat_test(H, W, kernel)
+    open_close_test(H, W, kernel)
+    # tophat_blackhat_test(H, W, kernel)
+    # gradient_test(H, W, kernel)
     
