@@ -14,6 +14,10 @@ torch.set_grad_enabled(False)
 
 # 获取当前Python文件的路径对象
 file = Path(__file__)
+# 将 src/common 加入到 sys.path，便于导入 helper
+import sys
+sys.path.append(str(file.parent.parent.parent / "common"))
+from helper import compute_accuracy_info
 
 # 构建编译所需的源文件列表
 sources = [

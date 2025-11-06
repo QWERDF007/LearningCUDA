@@ -17,6 +17,12 @@ import matplotlib.pyplot as plt
 
 torch.set_grad_enabled(False)
 
+file = Path(__file__)
+# 将 src/common 加入到 sys.path，便于导入 helper
+import sys
+sys.path.append(str(file.parent.parent.parent / "common"))
+from helper import compute_accuracy_info
+
 def get_gaussian_sigma(kernel_size):
     """
     计算sigma值，模拟OpenCV的默认行为
@@ -98,7 +104,6 @@ def compute_gaussian_kernel1d_opencv(kernel_size, sigma=None, ktype=6):
 
 
 
-file = Path(__file__)
 
 sources = [
     str(file.parent / "gaussian_blur.cu")
@@ -176,83 +181,10 @@ def run_benchmark(
     expected = cv2.GaussianBlur(a.cpu().numpy(), (ksz_w, ksz_h), sigmaX=sigma_x, sigmaY=sigma_y)
     out_np = out.cpu().numpy()
     
-    # 精度检测逻辑 - 参照img_resize.py
-    decimal = 8
-    mismatch_info = ''
-    
-    # 存储特定精度的不匹配百分比
-    mismatch_1e1 = '0%'  # 1e-1精度的不匹配百分比
-    mismatch_1e3 = '0%'  # 1e-3精度的不匹配百分比
-    mismatch_1e6 = '0%'  # 1e-6精度的不匹配百分比
-    passed_decimal = None  # 通过测试的前一个精度
-    max_abs_diff_all = 0  # 所有未通过测试中的最大绝对差异
-
-    # np.testing.assert_array_almost_equal(out_np, expected, 6)
-    
-    for i in range(12):
-        try:
-            np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            if passed_decimal is None:
-                passed_decimal = decimal
-            break
-        except AssertionError as e:
-            msg = str(e)
-            
-            # 提取不匹配百分比
-            match = re.search(r"Mismatched elements:\s*(\d+)\s*/\s*(\d+)\s*\(([\d\.]+%)\)", msg)
-            percent_str = None
-            if match:
-                percent_str = match.group(3)
-            
-            # 提取最大绝对差异
-            # match = re.search(r"Max absolute difference:\s*([0-9.eE+-]+)", msg)
-            match = re.search(r"Max absolute difference[^:]*:\s*([0-9.+-eE]+)", msg)
-            if match:
-                max_abs_diff = float(match.group(1))
-                max_abs_diff_all = max(max_abs_diff_all, max_abs_diff)
-            
-            # 记录特定精度的不匹配百分比
-            if decimal == 3:  # 1e-3
-                mismatch_1e3 = percent_str if percent_str else "0%"
-            elif decimal == 6:  # 1e-6
-                mismatch_1e6 = percent_str if percent_str else "0%"
-            elif decimal == 1: # 1e-1
-                mismatch_1e1 = percent_str if percent_str else "0%"
-            
-            decimal -= 1
-    
-    # 如果在1e-3和1e-6之前就通过了测试，设置这两个精度的不匹配百分比为0
-    if passed_decimal is not None:
-        if passed_decimal > 3 and mismatch_1e3 is None:
-            mismatch_1e3 = "0%"
-        if passed_decimal > 6 and mismatch_1e6 is None:
-            mismatch_1e6 = "0%"
-        elif passed_decimal > 6 and mismatch_1e1 is None:
-            mismatch_1e1 = "0%"
-    
-    # 构建mismatch_info字符串
-    info_parts = []
-    if passed_decimal is not None:
-        sign = '-'
-        if passed_decimal <= 0:
-            passed_decimal = -passed_decimal
-            sign = ''
-        info_parts.append(f"passed: 1e{sign}{passed_decimal}")
-    if mismatch_1e1 is not None:
-        info_parts.append(f"1e-1: {mismatch_1e1}")
-    if mismatch_1e3 is not None:
-        info_parts.append(f"1e-3: {mismatch_1e3}")
-    if mismatch_1e6 is not None:
-        info_parts.append(f"1e-6: {mismatch_1e6}")
-    if max_abs_diff_all:
-        info_parts.append(f"max_diff: {max_abs_diff_all}")
-    mismatch_info = ", ".join(info_parts)
+    mismatch_info = compute_accuracy_info(out_np, expected)
 
     out_info = f"out_{tag}" 
-    sign = '-'
-    if decimal <= 0:
-        decimal = -decimal
-        sign = ''
+    
     print(f"{out_info:>40}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:

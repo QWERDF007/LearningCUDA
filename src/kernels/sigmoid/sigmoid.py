@@ -13,6 +13,10 @@ import numpy as np
 torch.set_grad_enabled(False)
 
 file = Path(__file__)
+# 将 src/common 加入到 sys.path，便于导入 helper
+import sys
+sys.path.append(str(file.parent.parent.parent / "common"))
+from helper import compute_accuracy_info
 
 sources = [
     str(file.parent / "sigmoid.cu")
@@ -81,18 +85,12 @@ def run_benchmark(
 
     expected = torch.sigmoid(a).cpu().numpy()
     out_np = out.cpu().numpy()
-    decimal = 8
-    for i in range(10):
-        try:
-            np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            break
-        except:
-            decimal -= 1
-   
 
+    mismatch_info = compute_accuracy_info(out_np, expected)
+    
     out_info = f"out_{tag}" 
     
-    print(f"{out_info:>18}: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    print(f"{out_info:>18}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)

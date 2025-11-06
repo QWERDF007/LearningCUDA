@@ -13,6 +13,10 @@ import numpy as np
 torch.set_grad_enabled(False)
 
 file = Path(__file__)
+# 将 src/common 加入到 sys.path，便于导入 helper
+import sys
+sys.path.append(str(file.parent.parent.parent / "common"))
+from helper import compute_accuracy_info
 
 sources = [
     str(file.parent / "mat_transpose.cu")
@@ -81,49 +85,43 @@ def run_benchmark(
 
     expected = a.T.cpu().numpy()
     out_np = out.cpu().numpy()
-    decimal = 8
-    for i in range(10):
-        try:
-            np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            break
-        except:
-            decimal -= 1
-   
+
+    mismatch_info = compute_accuracy_info(out_np, expected)
 
     out_info = f"out_{tag}" 
     
-    print(f"{out_info:>30}: (1e-{decimal}), iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
+    print(f"{out_info:>30}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
         print(out)
     
     return out, mean_time
 
-Hs = [1024, 2048, 4096, 8192]
-Ws = [1024, 2048, 4096, 8192]
+Hs = [4096]
+Ws = [46000]
 Sizes = [(H, W) for H in Hs for W in Ws]
 
 for H, W in Sizes:
     print("-" * 85)
     print(" " * 40 + f"H={H}, W={W}")
 
-    a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
-    out = torch.randn((W, H), dtype=torch.float32).cuda().contiguous()
+    # a = torch.randn((H, W), dtype=torch.float32).cuda().contiguous()
+    # out = torch.randn((W, H), dtype=torch.float32).cuda().contiguous()
     
-    run_benchmark(lib.mat_transpose_f32_coalesced_read, a, "f32_coalesced_read", out)
-    run_benchmark(lib.mat_transpose_f32_coalesced_write, a, "f32_coalesced_write", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_read, a, "f32x4_coalesced_read", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_write, a, "f32x4_coalesced_write", out)
+    # run_benchmark(lib.mat_transpose_f32_coalesced_read, a, "f32_coalesced_read", out)
+    # run_benchmark(lib.mat_transpose_f32_coalesced_write, a, "f32_coalesced_write", out)
+    # run_benchmark(lib.mat_transpose_f32x4_coalesced_read, a, "f32x4_coalesced_read", out)
+    # run_benchmark(lib.mat_transpose_f32x4_coalesced_write, a, "f32x4_coalesced_write", out)
 
-    run_benchmark(lib.mat_transpose_f32_coalesced_read_2d, a, "f32_coalesced_read_2d", out)
-    run_benchmark(lib.mat_transpose_f32_coalesced_write_2d, a, "f32_coalesced_write_2d", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_read_2d, a, "f32x4_coalesced_read_2d", out)
-    run_benchmark(lib.mat_transpose_f32x4_coalesced_write_2d, a, "f32x4_coalesced_write_2d", out)
-    # run_benchmark(lib.mat_transpose_f32_2d_1, a, "f32_2d_1", out)
-    # run_benchmark(lib.mat_transpose_f32_2d_2, a, "f32_2d_2", out)
-    # run_benchmark(lib.mat_transpose_f32_2d_3, a, "f32_2d_3", out)
-    run_benchmark(lib.mat_transpose_shared_float, a, "f32_shared", out)
-    run_benchmark(lib.mat_transpose_shared_2_float, a, "f32_shared_2", out)
+    # run_benchmark(lib.mat_transpose_f32_coalesced_read_2d, a, "f32_coalesced_read_2d", out)
+    # run_benchmark(lib.mat_transpose_f32_coalesced_write_2d, a, "f32_coalesced_write_2d", out)
+    # run_benchmark(lib.mat_transpose_f32x4_coalesced_read_2d, a, "f32x4_coalesced_read_2d", out)
+    # run_benchmark(lib.mat_transpose_f32x4_coalesced_write_2d, a, "f32x4_coalesced_write_2d", out)
+    # # run_benchmark(lib.mat_transpose_f32_2d_1, a, "f32_2d_1", out)
+    # # run_benchmark(lib.mat_transpose_f32_2d_2, a, "f32_2d_2", out)
+    # # run_benchmark(lib.mat_transpose_f32_2d_3, a, "f32_2d_3", out)
+    # run_benchmark(lib.mat_transpose_shared_float, a, "f32_shared", out)
+    # run_benchmark(lib.mat_transpose_shared_2_float, a, "f32_shared_2", out)
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
     out = torch.zeros((W, H), dtype=torch.uint8).cuda().contiguous()

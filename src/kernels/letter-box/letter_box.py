@@ -16,6 +16,10 @@ import cv2
 torch.set_grad_enabled(False)
 
 file = Path(__file__)
+# 将 src/common 加入到 sys.path，便于导入 helper
+import sys
+sys.path.append(str(file.parent.parent.parent / "common"))
+from helper import compute_accuracy_info
 
 sources = [
     str(file.parent / "letter_box.cu")
@@ -131,75 +135,11 @@ def run_benchmark(
         a_uint8 = (a_np * 255).astype(np.uint8) if a_np.dtype == np.float32 else a_np.astype(np.uint8)
         expected = cv_baseline(a_uint8, dW, dH)
     out_np = out.cpu().numpy()
-    decimal = 8
-    mismatch_info = ''
-    ok = False
-    
-    # 存储特定精度的不匹配百分比
-    mismatch_1e3 = '0%'  # 1e-3精度的不匹配百分比
-    mismatch_1e6 = '0%'  # 1e-6精度的不匹配百分比
-    passed_decimal = None  # 通过测试的前一个精度
-    max_abs_diff_all = 0  # 所有未通过测试中的最大绝对差异
-    
-    for i in range(12):
-        try:
-            np.testing.assert_array_almost_equal(out_np, expected, decimal)
-            ok = True
-            if passed_decimal is None:
-                passed_decimal = decimal
-            break
-        except AssertionError as e:
-            msg = str(e)
-            
-            # 提取不匹配百分比
-            match = re.search(r"Mismatched elements:\s*(\d+)\s*/\s*(\d+)\s*\(([\d\.]+%)\)", msg)
-            percent_str = None
-            if match:
-                percent_str = match.group(3)
-            
-            # 提取最大绝对差异
-            match = re.search(r"Max absolute difference:\s*([0-9.eE+-]+)", msg)
-            if match:
-                max_abs_diff = float(match.group(1))
-                max_abs_diff_all = max(max_abs_diff_all, max_abs_diff)
-            
-            # 记录特定精度的不匹配百分比
-            if decimal == 3:  # 1e-3
-                mismatch_1e3 = percent_str if percent_str else "0%"
-            elif decimal == 6:  # 1e-6
-                mismatch_1e6 = percent_str if percent_str else "0%"
-            
-            decimal -= 1
-    
-    # 如果在1e-3和1e-6之前就通过了测试，设置这两个精度的不匹配百分比为0
-    if passed_decimal is not None:
-        if passed_decimal > 3 and mismatch_1e3 is None:
-            mismatch_1e3 = "0%"
-        if passed_decimal > 6 and mismatch_1e6 is None:
-            mismatch_1e6 = "0%"
-    
-    # 构建mismatch_info字符串
-    info_parts = []
-    if passed_decimal is not None:
-        sign = '-'
-        if passed_decimal <= 0:
-            passed_decimal = -passed_decimal
-            sign = ''
-        info_parts.append(f"passed: 1e{sign}{passed_decimal}")
-    if mismatch_1e3 is not None:
-        info_parts.append(f"1e-3: {mismatch_1e3}")
-    if mismatch_1e6 is not None:
-        info_parts.append(f"1e-6: {mismatch_1e6}")
-    if max_abs_diff_all:
-        info_parts.append(f"max_diff: {max_abs_diff_all}")
-    mismatch_info = ", ".join(info_parts)
-   
 
+    mismatch_info = compute_accuracy_info(out_np, expected)
+    
     out_info = f"out_{tag}" 
-    sign = '-'
-    if decimal <= 0:
-        decimal = -decimal
-        sign = ''
+    
     print(f"{out_info:>25}: {mismatch_info}, iters: {iters}, time: {total_time:.4f}ms, avg: {mean_time:.4f}ms")
     
     if show_all:
