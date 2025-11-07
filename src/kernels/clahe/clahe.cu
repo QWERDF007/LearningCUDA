@@ -72,7 +72,6 @@ __global__ void clahe_compute_lut_kernel(const uint8_t *__restrict__ src, uint8_
 
         // Step 4: 分配余数（与 OpenCV 逻辑对齐：residualStep = MAX(histSize / residual, 1)）
         // OpenCV 使用串行方式处理余数，这里也采用串行方式以保证完全一致
-        __syncthreads();
         if (tid == 0 && residual > 0)
         {
             int residualStep = max(256 / (int)residual, 1);

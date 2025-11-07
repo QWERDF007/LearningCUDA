@@ -812,6 +812,9 @@ __global__ void morphology_v_shared_vec4_u8_kernel(const T *__restrict__ tmp, T 
     reinterpret_cast<uchar4 *>(dst + global_row_base)[vec_out_idx] = outv; // 直接写入（要求 launch 保证不写越界）
 }
 
+/**
+ * @brief 矩阵转置, 128bit 写连续
+ */
 __global__ void mat_transpose_u8x16_coalesced_write_2d_kernel(uint8_t *A, uint8_t *B, const int H, const int W)
 {
     const int x  = blockIdx.x * blockDim.x + threadIdx.x;
@@ -832,6 +835,36 @@ __global__ void mat_transpose_u8x16_coalesced_write_2d_kernel(uint8_t *A, uint8_
 
     // 连续写入 B（合并写入），使用 uint4 一次写入 16 字节
     reinterpret_cast<uint4 *>(B)[x * H / 16 + y] = *reinterpret_cast<uint4 *>(pack);
+}
+
+/**
+ * @brief 逐元素减法, 32 bit 写连续
+ */
+template<typename T>
+__global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *__restrict__ b, T *c, const int N)
+{
+    if constexpr (std::is_same_v<T, float>)
+    {
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= N)
+            return;
+        c[idx] = a[idx] - b[idx];
+    }
+    else if constexpr (std::is_same_v<T, uint8_t>)
+    {
+        const int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
+        if (idx >= N)
+            return;
+        uint8_t pack_a[4], pack_b[4], pack_c[4];
+        *reinterpret_cast<uint32_t *>(pack_a) = *reinterpret_cast<const uint32_t *>(&(a[idx]));
+        *reinterpret_cast<uint32_t *>(pack_b) = *reinterpret_cast<const uint32_t *>(&(b[idx]));
+#pragma unroll
+        for (int i = 0; i < 4; i++)
+        {
+            pack_c[i] = saturate_cast<uint8_t>(pack_a[i] - pack_b[i]);
+        }
+        *reinterpret_cast<uint32_t *>(&(c[idx])) = *reinterpret_cast<uint32_t *>(pack_c);
+    }
 }
 
 #define TORCH_BINDING_MORPHOLOGY(tag, th_type, element_type, kernel_type, Op, n_pack)                               \
@@ -1810,33 +1843,6 @@ __global__ void mat_transpose_u8x16_coalesced_write_2d_kernel(uint8_t *A, uint8_
             }                                                                                                          \
         }                                                                                                              \
     }
-
-template<typename T>
-__global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *__restrict__ b, T *c, const int N)
-{
-    if constexpr (std::is_same_v<T, float>)
-    {
-        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx >= N)
-            return;
-        c[idx] = a[idx] - b[idx];
-    }
-    else if constexpr (std::is_same_v<T, uint8_t>)
-    {
-        const int idx = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
-        if (idx >= N)
-            return;
-        uint8_t pack_a[4], pack_b[4], pack_c[4];
-        *reinterpret_cast<uint32_t *>(pack_a) = *reinterpret_cast<const uint32_t *>(&(a[idx]));
-        *reinterpret_cast<uint32_t *>(pack_b) = *reinterpret_cast<const uint32_t *>(&(b[idx]));
-#pragma unroll
-        for (int i = 0; i < 4; i++)
-        {
-            pack_c[i] = saturate_cast<uint8_t>(pack_a[i] - pack_b[i]);
-        }
-        *reinterpret_cast<uint32_t *>(&(c[idx])) = *reinterpret_cast<uint32_t *>(pack_c);
-    }
-}
 
 /***************************** TOPHAT & BLACKHAT ************************************/
 

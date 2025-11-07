@@ -1,4 +1,4 @@
-# cvtColor
+# EqualizeHist
 
 ## 介绍
 
