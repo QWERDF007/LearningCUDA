@@ -403,6 +403,11 @@ def gradient_test(H, W, kernel):
     run_benchmark(lib.gradient_separable_T_shared_vec4_u8_uint8_t, a, cv2.MORPH_GRADIENT, kernel, 'SEP_VEC4_CW_T GRADIENT', out, tmp, tmpT, 
         is_tophat_blackhat=True, is_separable=True)
 
+def hitmiss_test(H, W, kernel):
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+
+    out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
+    run_benchmark(lib.hitmiss_uint8_t_uint8_t, a, cv2.MORPH_HITMISS, kernel, 'MORPH_HITMISS', out)
 
 Hs = [4096]
 Ws = [46000]
@@ -416,7 +421,8 @@ for H, W, K in Sizes:
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
 
     # basic_test(H, W, kernel)
-    open_close_test(H, W, kernel)
+    # open_close_test(H, W, kernel)
     # tophat_blackhat_test(H, W, kernel)
     # gradient_test(H, W, kernel)
+    hitmiss_test(H, W, kernel)
     

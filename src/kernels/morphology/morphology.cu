@@ -867,6 +867,124 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
     }
 }
 
+/**
+ * @brief 图像取反（用于 HITMISS）
+ */
+template<typename T, int CH>
+__global__ void bitwise_not_kernel(const T *__restrict__ src, T *__restrict__ dst, const int H, const int W,
+                                   const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+
+    const int base = tid * CH;
+
+#pragma unroll
+    for (int c = 0; c < CH; c++)
+    {
+        dst[base + c] = ~src[base + c];
+    }
+}
+
+/**
+ * @brief 按位与（用于 HITMISS）
+ */
+template<typename T, int CH>
+__global__ void bitwise_and_kernel(const T *__restrict__ src1, const T *__restrict__ src2, T *__restrict__ dst,
+                                   const int H, const int W, const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x    = tid % W;
+    const int y    = tid / W;
+    const int base = (y * W + x) * CH;
+
+#pragma unroll
+    for (int c = 0; c < CH; c++)
+    {
+        dst[base + c] = src1[base + c] & src2[base + c];
+    }
+}
+
+// HITMISS 变换核函数
+// 核（SE）中：1 表示必须匹配前景，-1 表示必须匹配背景，0 表示不关心
+template<typename T, typename KT, int CH>
+__global__ void hitmiss_kernel(const T *__restrict__ src, T *__restrict__ dst, const KT *__restrict__ SE, const int ksh,
+                               const int ksw, const int H, const int W, const int N)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N)
+        return;
+    const int x = tid % W;
+    const int y = tid / W;
+
+    const int anchor_y = ksh / 2;
+    const int anchor_x = ksw / 2;
+
+    const int base = (y * W + x) * CH;
+
+#pragma unroll
+    for (int c = 0; c < CH; c++)
+    {
+        // e1: 用 k1（值为1的位置）对原图进行腐蚀
+        T    e1     = MinOp<T>::init();
+        bool has_k1 = false;
+
+        // e2: 用 k2（值为-1的位置）对取反后的图进行腐蚀
+        T    e2     = MinOp<T>::init();
+        bool has_k2 = false;
+
+        // 遍历结构元素
+        for (int ky = 0; ky < ksh; ky++)
+        {
+            const int sy = y + ky - anchor_y;
+            if (sy < 0 || sy >= H)
+                continue; // 超出边界
+
+            for (int kx = 0; kx < ksw; kx++)
+            {
+                const KT se_val = SE[ky * ksw + kx];
+                if (se_val == 0)
+                    continue; // 不关心的位置
+
+                const int sx = x + kx - anchor_x;
+                if (sx < 0 || sx >= W)
+                    continue;
+
+                const int src_idx = (sy * W + sx) * CH + c;
+                const T   val     = src[src_idx];
+
+                if (se_val == 1)
+                {
+                    // k1: 必须匹配前景（原图）
+                    has_k1 = true;
+                    e1     = MinOp<T>::reduce(e1, val);
+                }
+                else if (se_val == -1)
+                {
+                    // k2: 必须匹配背景（取反后的图）
+                    has_k2           = true;
+                    T val_complement = ~val; // 取反
+                    e2               = MinOp<T>::reduce(e2, val_complement);
+                }
+            }
+        }
+
+        // 如果 k1 为空，e1 设为 255（所有位置都满足）
+        if (!has_k1)
+            e1 = 255;
+
+        // 如果 k2 为空，e2 设为 255（所有位置都满足）
+        if (!has_k2)
+            e2 = 255;
+
+        // 最终结果：e1 & e2
+        dst[base + c] = e1 & e2;
+    }
+}
+
 #define TORCH_BINDING_MORPHOLOGY(tag, th_type, element_type, kernel_type, Op, n_pack)                               \
     void tag##_##element_type##_##kernel_type(torch::Tensor src, torch::Tensor dst, torch::Tensor kernel,           \
                                               const int ksh, const int ksw)                                         \
@@ -2314,6 +2432,35 @@ __global__ void elementwise_sub_32bit_kernel(const T *__restrict__ a, const T *_
             reinterpret_cast<element_type *>(dst.data_ptr()), N);                                                      \
     }
 
+#define TORCH_BINDING_MORPHOLOGY_HITMISS(th_type, element_type, kernel_type, n_pack)                                \
+    void hitmiss_##element_type##_##kernel_type(torch::Tensor src, torch::Tensor dst, torch::Tensor kernel,         \
+                                                const int ksh, const int ksw)                                       \
+    {                                                                                                               \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                    \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                              \
+        CHECK_TORCH_TENSOR_DEVICE(kernel)                                                                           \
+        const int H  = src.size(0);                                                                                 \
+        const int W  = src.size(1);                                                                                 \
+        const int CH = src.dim() == 2 ? 1 : src.size(2);                                                            \
+        const int N  = H * W;                                                                                       \
+        dim3      block(THREADS);                                                                                   \
+        dim3      grid(divUp(N, THREADS));                                                                          \
+        if (CH == 1)                                                                                                \
+        {                                                                                                           \
+            hitmiss_kernel<element_type, kernel_type, 1><<<grid, block>>>(                                          \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+        else if (CH == 3)                                                                                           \
+        {                                                                                                           \
+            hitmiss_kernel<element_type, kernel_type, 3><<<grid, block>>>(                                          \
+                reinterpret_cast<element_type *>(src.data_ptr()), reinterpret_cast<element_type *>(dst.data_ptr()), \
+                reinterpret_cast<kernel_type *>(kernel.data_ptr()), ksh, ksw, H, W, N);                             \
+        }                                                                                                           \
+    }
+
 TORCH_BINDING_MORPHOLOGY(erode, torch::kUInt8, uint8_t, uint8_t, MinOp<uint8_t>, 1)
 TORCH_BINDING_MORPHOLOGY(dilate, torch::kUInt8, uint8_t, uint8_t, MaxOp<uint8_t>, 1)
 
@@ -2385,6 +2532,10 @@ TORCH_BINDING_MORPHOLOGY_GRADIENT(torch::kUInt8, uint8_t, uint8_t, 1)
 TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE(torch::kUInt8, uint8_t, 1)
 TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE_SHARED_T(shared_vec4_u8, torch::kUInt8, uint8_t, 4)
 
+/****************************** HITMISS ************************************/
+
+TORCH_BINDING_MORPHOLOGY_HITMISS(torch::kUInt8, uint8_t, uint8_t, 1)
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(erode_uint8_t_uint8_t)
@@ -2437,4 +2588,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(gradient_uint8_t_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(gradient_separable_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(gradient_separable_T_shared_vec4_u8_uint8_t)
+
+    TORCH_BINDING_COMMON_EXTENSION(hitmiss_uint8_t_uint8_t)
 }
