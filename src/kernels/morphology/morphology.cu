@@ -2534,7 +2534,7 @@ TORCH_BINDING_MORPHOLOGY_GRADIENT_SEPARABLE_SHARED_T(shared_vec4_u8, torch::kUIn
 
 /****************************** HITMISS ************************************/
 
-TORCH_BINDING_MORPHOLOGY_HITMISS(torch::kUInt8, uint8_t, uint8_t, 1)
+TORCH_BINDING_MORPHOLOGY_HITMISS(torch::kUInt8, uint8_t, int8_t, 1)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
@@ -2589,5 +2589,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(gradient_separable_uint8_t)
     TORCH_BINDING_COMMON_EXTENSION(gradient_separable_T_shared_vec4_u8_uint8_t)
 
-    TORCH_BINDING_COMMON_EXTENSION(hitmiss_uint8_t_uint8_t)
+    TORCH_BINDING_COMMON_EXTENSION(hitmiss_uint8_t_int8_t)
 }

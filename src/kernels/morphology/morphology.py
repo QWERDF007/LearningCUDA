@@ -132,7 +132,7 @@ def run_benchmark(
     expected = cv2.morphologyEx(a_np, op, kernel)
     
     out_np = out.cpu().numpy()
-    
+
     mismatch_info = compute_accuracy_info(out_np, expected)
 
     out_info = tag 
@@ -405,12 +405,12 @@ def gradient_test(H, W, kernel):
 
 def hitmiss_test(H, W, kernel):
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
-
+    b = (a > 128).to(torch.uint8) * 255
     out = torch.zeros((H, W), dtype=torch.uint8).cuda().contiguous()
-    run_benchmark(lib.hitmiss_uint8_t_uint8_t, a, cv2.MORPH_HITMISS, kernel, 'MORPH_HITMISS', out)
+    run_benchmark(lib.hitmiss_uint8_t_int8_t, b, cv2.MORPH_HITMISS, kernel, 'MORPH_HITMISS', out)
 
 Hs = [4096]
-Ws = [46000]
+Ws = [4096]
 Ks = [11]
 Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
 
@@ -420,9 +420,16 @@ for H, W, K in Sizes:
     
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (K, K))
 
+    
+
     # basic_test(H, W, kernel)
     # open_close_test(H, W, kernel)
     # tophat_blackhat_test(H, W, kernel)
     # gradient_test(H, W, kernel)
+    kernel = np.array([
+            [ 0,  1,  0],
+            [-1,  1, -1],
+            [ 0, -1,  0]], dtype=np.int8)
+    print(kernel)
     hitmiss_test(H, W, kernel)
     

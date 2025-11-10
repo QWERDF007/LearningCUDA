@@ -43,6 +43,12 @@ __device__ __forceinline__ unsigned char saturate_cast(double v)
 }
 
 template<>
+__device__ __forceinline__ short saturate_cast(short v)
+{
+    return v;
+}
+
+template<>
 __device__ __forceinline__ short saturate_cast(int v)
 {
     return (short)((unsigned)(v + 32768) <= 65535U ? v : v > 0 ? 32767 : -32768);

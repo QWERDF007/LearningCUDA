@@ -26,7 +26,7 @@ from helper import compute_accuracy_info
 
 
 sources = [
-    str(file.parent / "get_single_channel.cu")
+    str(file.parent / "sobel.cu")
 ]
 
 extra_include_paths = [
@@ -34,7 +34,7 @@ extra_include_paths = [
 ]
 
 lib = load(
-    name="get_single_channel_lib",
+    name="sobel_lib",
     sources=sources,
     extra_include_paths=extra_include_paths,
     extra_cuda_cflags=[                      
@@ -50,21 +50,23 @@ lib = load(
     extra_cflags=["-std=c++17"],               
 )
 
-def get_single_channel(img, channel_type: str, channel1: int, channel2: int):
-    channels = cv2.split(img)
-    if channel_type == "两通道之差":
-        res = cv2.subtract(channels[channel1], channels[channel2])
-    else:
-        res = channels[channel1]
-    return res
+def get_kernel(ksize, dx, dy, normalize=False):
+    # kx, ky 返回的是列向量 (kx: ksize x 1, ky: ksize x 1)
+    kx, ky = cv2.getDerivKernels(dx, dy, ksize, normalize=normalize)
+    # 生成 2D kernel（外积）
+    sobel_kernel = np.outer(kx.reshape(-1), ky.reshape(-1))
+    return sobel_kernel.T
 
 
 def run_benchmark(
     perf_func: callable,
     a: torch.Tensor,
-    channel_type: str,
-    c1: int,
-    c2: int,
+    kernel: torch.Tensor,
+    dx: int,
+    dy: int,
+    ksize: int,
+    ksh,
+    ksw,
     tag: str,
     out: Optional[torch.Tensor] = None,
     warmup: int = 20,
@@ -75,17 +77,16 @@ def run_benchmark(
     性能基准测试函数
     用于测量CUDA核函数的执行时间性能
     """
-    
     # warmup
     for i in range(warmup):
-        perf_func(a, out, c1, c2)
+        perf_func(a, out, kernel, ksh, ksw)
     
     torch.cuda.synchronize()
     
     start = time.time()
 
     for i in range(iters):
-        perf_func(a, out, c1, c2)
+        perf_func(a, out, kernel, ksh, ksw)
         
     torch.cuda.synchronize()
     
@@ -97,7 +98,8 @@ def run_benchmark(
     a_np = a.cpu().numpy()
     out_np = out.cpu().numpy()
     
-    expected = get_single_channel(a_np, channel_type, c1, c2)
+    expected = cv2.Sobel(a_np, cv2.CV_16SC1, dx, dy, ksize=ksize, scale=1, delta=0)
+    expected = cv2.convertScaleAbs(expected)
     
     mismatch_info = compute_accuracy_info(out_np, expected)
 
@@ -109,25 +111,38 @@ def run_benchmark(
     
     return out, mean_time, tag
 
+
 Hs = [4096]
 Ws = [4096]
-Channels = [('蓝色通道', 0), ('绿色通道', 1), ('红色通道', 2), ('两通道之差', -1)]
-Sizes = [(H, W, ci) for H in Hs for W in Ws for ci in Channels]
+Ks = [1, 3, 5, 7]
+Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
 
-for H, W, ci in Sizes:
+for H, W, K in Sizes:
     print("-" * 85)
-    print(" " * 40 + f"H={H}, W={W}, ch=3")
+    print(" " * 40 + f"H={H}, W={W}, K={K}, ch=1")
 
-    c, i = ci
+    a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
+    out = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
 
-    a = torch.randint(0, 256, (H, W, 3), dtype=torch.uint8).cuda().contiguous()
-    out = torch.zeros((H,W), dtype=torch.uint8).cuda().contiguous()
+    kernel_x = get_kernel(K, 1, 0)
+    kernel_y = get_kernel(K, 0, 1)
+    kernel_xy = get_kernel(K, 1, 1)
 
-    if i == -1:
-        run_benchmark(lib.channel_subtract_uint8_t, a, c, 0, 1, c, out, iters=1000)
-        run_benchmark(lib.channel_subtract_uint8_t, a, c, 1, 1, c, out, iters=1000)
-        run_benchmark(lib.channel_subtract_uint8_t, a, c, 2, 1, c, out, iters=1000)
+    # print(kernel_x)
+    # print(kernel_y)
+    # print(kernel_xy)
+
+    kernel_x_tensor = torch.from_numpy(kernel_x.astype(np.int8)).cuda().contiguous()
+    kernel_y_tensor = torch.from_numpy(kernel_y.astype(np.int8)).cuda().contiguous()
+    kernel_xy_tensor = torch.from_numpy(kernel_xy.astype(np.int8)).cuda().contiguous()
+
+    if K == 1:
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_x_tensor, 1, 0, K, 1, 3,  'sobel x', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_y_tensor, 0, 1, K, 3, 1, 'sobel y', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_xy_tensor, 1, 1, K, 3, 3, 'sobel xy', out, iters=1000)
     else:
-        run_benchmark(lib.get_single_channel_uint8_t, a, c, i, 0, c, out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_x_tensor, 1, 0, K, K, K,  'sobel x', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_y_tensor, 0, 1, K, K, K, 'sobel y', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, kernel_xy_tensor, 1, 1, K, K, K, 'sobel xy', out, iters=1000)
    
     print("-" * 85)
