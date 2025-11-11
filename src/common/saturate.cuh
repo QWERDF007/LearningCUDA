@@ -69,6 +69,12 @@ __device__ __forceinline__ short saturate_cast(double v)
 }
 
 template<>
+__device__ __forceinline__ int saturate_cast(int v)
+{
+    return v;
+}
+
+template<>
 __device__ __forceinline__ int saturate_cast(float v)
 {
     return __float2int_rn(v);
