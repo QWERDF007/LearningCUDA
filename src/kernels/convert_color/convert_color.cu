@@ -8,32 +8,39 @@ struct ColorChannel
 {
     static __device__ __forceinline__ _Tp max()
     {
-        return std::numeric_limits<_Tp>::max();
+        if constexpr (std::is_same_v<_Tp, uint8_t>)
+        {
+            return 255;
+        }
+        else if constexpr (std::is_same_v<_Tp, int>)
+        {
+            return INT_MAX;
+        }
+        else if constexpr (std::is_same_v<_Tp, float>)
+        {
+            return 1.f;
+        }
+        else
+        {
+            return 1.0;
+        }
     }
 
     static __device__ __forceinline__ _Tp half()
     {
-        return (_Tp)(max() / 2 + 1);
-    }
-};
-
-template<>
-struct ColorChannel<float>
-{
-    static __device__ __forceinline__ float max()
-    {
-        return 1.f;
-    }
-
-    static __device__ __forceinline__ float half()
-    {
-        return 0.5f;
+        if constexpr (std::is_same_v<_Tp, float>)
+        {
+            return 0.5f;
+        }
+        else
+        {
+            return (_Tp)(max() / 2 + 1);
+        }
     }
 };
 
 template<typename T>
-__global__ void gray2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                const int N)
+__global__ void gray2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -41,7 +48,7 @@ __global__ void gray2bgr_kernel(T *src, T *dst, const int H, const int W, const 
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * dst_step + x * 3;
+    const int base = tid * 3;
 
 #pragma unroll
     for (int i = 0; i < 3; ++i)
@@ -51,8 +58,7 @@ __global__ void gray2bgr_kernel(T *src, T *dst, const int H, const int W, const 
 }
 
 template<typename T>
-__global__ void gray2bgra_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                 const int N)
+__global__ void gray2bgra_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -60,7 +66,7 @@ __global__ void gray2bgra_kernel(T *src, T *dst, const int H, const int W, const
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * dst_step + x * 4;
+    const int base = tid * 4;
 
 #pragma unroll
     for (int i = 0; i < 3; ++i)
@@ -71,8 +77,7 @@ __global__ void gray2bgra_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void bgr2rgb_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2rgb_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -80,7 +85,7 @@ __global__ void bgr2rgb_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * dst_step + x * 3;
+    const int base = tid * 3;
 
     dst[base]     = src[base + 2];
     dst[base + 1] = src[base + 1];
@@ -88,8 +93,7 @@ __global__ void bgr2rgb_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void bgr2rgba_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                const int N)
+__global__ void bgr2rgba_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -97,8 +101,8 @@ __global__ void bgr2rgba_kernel(T *src, T *dst, const int H, const int W, const 
     const int x = tid % W;
     const int y = tid / W;
 
-    const int src_base = y * src_step + x * 3;
-    const int dst_base = y * dst_step + x * 4;
+    const int src_base = tid * 3;
+    const int dst_base = tid * 4;
 
     dst[dst_base]     = src[src_base + 2];
     dst[dst_base + 1] = src[src_base + 1];
@@ -107,8 +111,7 @@ __global__ void bgr2rgba_kernel(T *src, T *dst, const int H, const int W, const 
 }
 
 template<typename T>
-__global__ void bgr2bgra_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                const int N)
+__global__ void bgr2bgra_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -116,8 +119,8 @@ __global__ void bgr2bgra_kernel(T *src, T *dst, const int H, const int W, const 
     const int x = tid % W;
     const int y = tid / W;
 
-    const int src_base = y * src_step + x * 3;
-    const int dst_base = y * dst_step + x * 4;
+    const int src_base = tid * 3;
+    const int dst_base = tid * 4;
 
     dst[dst_base]     = src[src_base];
     dst[dst_base + 1] = src[src_base + 1];
@@ -138,8 +141,7 @@ static const int GY15 = 19235; // == G2YF*32768 + 0.5
 static const int BY15 = 3735;  // == B2YF*32768 + 0.5
 
 template<typename T>
-__global__ void bgr2gray_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                const int N)
+__global__ void bgr2gray_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -147,7 +149,7 @@ __global__ void bgr2gray_kernel(T *src, T *dst, const int H, const int W, const 
     const int x = tid % W;
     const int y = tid / W;
 
-    const int src_base = y * src_step + x * 3;
+    const int src_base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -160,8 +162,7 @@ __global__ void bgr2gray_kernel(T *src, T *dst, const int H, const int W, const 
 }
 
 template<typename T>
-__global__ void rgb2gray_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                const int N)
+__global__ void rgb2gray_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -169,7 +170,7 @@ __global__ void rgb2gray_kernel(T *src, T *dst, const int H, const int W, const 
     const int x = tid % W;
     const int y = tid / W;
 
-    const int src_base = y * src_step + x * 3;
+    const int src_base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -220,8 +221,7 @@ static const int   CR2GI = -11698;
 static const int   CR2RI = 22987;
 
 template<typename T>
-__global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                 const int N)
+__global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -229,7 +229,7 @@ __global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -258,8 +258,7 @@ __global__ void bgr2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void YCrCb2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                 const int N)
+__global__ void YCrCb2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -267,7 +266,7 @@ __global__ void YCrCb2bgr_kernel(T *src, T *dst, const int H, const int W, const
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T Y  = src[base];
     T Cr = src[base + 1];
@@ -300,8 +299,7 @@ __global__ void YCrCb2bgr_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void bgr2yuv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2yuv_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -309,7 +307,7 @@ __global__ void bgr2yuv_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -338,8 +336,7 @@ __global__ void bgr2yuv_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void yuv2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void yuv2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -347,7 +344,7 @@ __global__ void yuv2bgr_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T Y  = src[base];
     T Cr = src[base + 2];
@@ -380,8 +377,7 @@ __global__ void yuv2bgr_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void rgb2YCrCb_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                                 const int N)
+__global__ void rgb2YCrCb_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -389,7 +385,7 @@ __global__ void rgb2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -418,8 +414,7 @@ __global__ void rgb2YCrCb_kernel(T *src, T *dst, const int H, const int W, const
 }
 
 template<typename T>
-__global__ void rgb2yuv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void rgb2yuv_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -427,7 +422,7 @@ __global__ void rgb2yuv_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     if constexpr (std::is_same_v<T, float>)
     {
@@ -472,8 +467,7 @@ __device__ __forceinline__ int hdiv_table180(int v)
 }
 
 template<typename T>
-__global__ void bgr2hsv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2hsv_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -481,7 +475,7 @@ __global__ void bgr2hsv_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T b = src[base];
     T g = src[base + 1];
@@ -570,8 +564,7 @@ __device__ void hsv2bgr_f(float h, float s, float v, float &b, float &g, float &
 }
 
 template<typename T>
-__global__ void hsv2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void hsv2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -579,7 +572,7 @@ __global__ void hsv2bgr_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T h = src[base];
     T s = src[base + 1];
@@ -606,8 +599,7 @@ __global__ void hsv2bgr_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void rgb2hsv_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void rgb2hsv_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -615,7 +607,7 @@ __global__ void rgb2hsv_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T r = src[base];
     T g = src[base + 1];
@@ -689,8 +681,7 @@ __device__ void bgr2hls_f(float b, float g, float r, float &h, float &l, float &
 }
 
 template<typename T>
-__global__ void bgr2hls_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2hls_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -698,7 +689,7 @@ __global__ void bgr2hls_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T b = src[base];
     T g = src[base + 1];
@@ -761,8 +752,7 @@ __device__ void hls2bgr_f(float h, float l, float s, float &b, float &g, float &
 }
 
 template<typename T>
-__global__ void hls2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void hls2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -770,7 +760,7 @@ __global__ void hls2bgr_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T h = src[base];
     T l = src[base + 1];
@@ -798,8 +788,7 @@ __global__ void hls2bgr_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void rgb2hls_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void rgb2hls_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -807,7 +796,7 @@ __global__ void rgb2hls_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T r = src[base];
     T g = src[base + 1];
@@ -846,8 +835,7 @@ __constant__ float sRGB2XYZ_D65_f[9]
     = {0.412453, 0.357580, 0.180423, 0.212671, 0.715160, 0.072169, 0.019334, 0.119193, 0.950227};
 
 template<typename T>
-__global__ void bgr2xyz_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2xyz_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -855,7 +843,7 @@ __global__ void bgr2xyz_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T b = src[base];
     T g = src[base + 1];
@@ -888,8 +876,7 @@ __constant__ float XYZ2sRGB_D65_f[9]
     = {3.240479, -1.53715, -0.498535, -0.969256, 1.875991, 0.041556, 0.055648, -0.204043, 1.057311};
 
 template<typename T>
-__global__ void xyz2bgr_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void xyz2bgr_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -897,7 +884,7 @@ __global__ void xyz2bgr_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T X = src[base];
     T Y = src[base + 1];
@@ -926,8 +913,7 @@ __global__ void xyz2bgr_kernel(T *src, T *dst, const int H, const int W, const i
 }
 
 template<typename T>
-__global__ void rgb2xyz_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void rgb2xyz_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -935,7 +921,7 @@ __global__ void rgb2xyz_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T r = src[base];
     T g = src[base + 1];
@@ -1170,8 +1156,7 @@ __device__ __forceinline__ void trilinearInterpolate(float R, float G, float B, 
 }
 
 template<typename T>
-__global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const int src_step, const int dst_step,
-                               const int N)
+__global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const int N)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N)
@@ -1179,7 +1164,7 @@ __global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const i
     const int x = tid % W;
     const int y = tid / W;
 
-    const int base = y * src_step + x * 3;
+    const int base = tid * 3;
 
     T blue  = src[base];
     T green = src[base + 1];
@@ -1246,25 +1231,22 @@ __global__ void bgr2lab_kernel(T *src, T *dst, const int H, const int W, const i
     }
 }
 
-#define TORCH_BINDING_CVTCOLOR_TEMPLATE(tag, th_type, element_type, n_pack)                                           \
-    void tag##_##element_type(torch::Tensor src, torch::Tensor dst)                                                   \
-    {                                                                                                                 \
-        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                      \
-        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                      \
-        CHECK_TORCH_TENSOR_DEVICE(src)                                                                                \
-        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                                \
-        const int H        = src.size(0);                                                                             \
-        const int W        = src.size(1);                                                                             \
-        const int src_CH   = src.dim() == 2 ? 1 : src.size(2);                                                        \
-        const int src_step = W * src_CH;                                                                              \
-        const int dst_CH   = dst.dim() == 2 ? 1 : dst.size(2);                                                        \
-        const int dst_step = W * dst_CH;                                                                              \
-        const int N        = H * W;                                                                                   \
-        dim3      block(THREADS);                                                                                     \
-        dim3      grid(divUp(N, THREADS));                                                                            \
-        tag##_kernel<element_type><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),                 \
-                                                    reinterpret_cast<element_type *>(dst.data_ptr()), H, W, src_step, \
-                                                    dst_step, N);                                                     \
+#define TORCH_BINDING_CVTCOLOR_TEMPLATE(tag, th_type, element_type, n_pack)                                     \
+    void tag##_##element_type(torch::Tensor src, torch::Tensor dst)                                             \
+    {                                                                                                           \
+        CHECK_TORCH_TENSOR_DTYPE(src, (th_type))                                                                \
+        CHECK_TORCH_TENSOR_DTYPE(dst, (th_type))                                                                \
+        CHECK_TORCH_TENSOR_DEVICE(src)                                                                          \
+        CHECK_TORCH_TENSOR_DEVICE(dst)                                                                          \
+        const int H      = src.size(0);                                                                         \
+        const int W      = src.size(1);                                                                         \
+        const int src_CH = src.dim() == 2 ? 1 : src.size(2);                                                    \
+        const int dst_CH = dst.dim() == 2 ? 1 : dst.size(2);                                                    \
+        const int N      = H * W;                                                                               \
+        dim3      block(THREADS);                                                                               \
+        dim3      grid(divUp(N, THREADS));                                                                      \
+        tag##_kernel<element_type><<<grid, block>>>(reinterpret_cast<element_type *>(src.data_ptr()),           \
+                                                    reinterpret_cast<element_type *>(dst.data_ptr()), H, W, N); \
     }
 
 TORCH_BINDING_CVTCOLOR_TEMPLATE(gray2bgr, torch::kUInt8, uint8_t, 1)
