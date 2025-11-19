@@ -59,6 +59,26 @@ def get_laplacian_kernel(ksize):
     kx, ky = cv2.getDerivKernels(2, 0, ksize, normalize=False)
     return kx, ky
 
+def get_scharr_kernel(dx, dy, normalize=False):
+    """
+    返回 3x3 Scharr 卷积核。
+    dx, dy 必须满足 (dx,dy)=(1,0) 或 (0,1)。
+    如果 normalize=True，会把核除以 32（常用的归一化因子）。
+    """
+    assert (dx == 1 and dy == 0) or (dx == 0 and dy == 1), "Scharr 仅支持 dx+dy=1 的情况"
+
+    # 使用与 OpenCV 等价的可分解因子：
+    # 对 dx=1（求 x 方向导数）：kx = [-1, 0, 1], ky = [3, 10, 3]
+    # 对 dy=1（求 y 方向导数）：kx = [3, 10, 3], ky = [-1, 0, 1]
+    if dx == 1:
+        kx = np.array([-1, 0, 1], dtype=np.float32)
+        ky = np.array([3, 10, 3], dtype=np.float32)
+    else:
+        kx = np.array([3, 10, 3], dtype=np.float32)
+        ky = np.array([-1, 0, 1], dtype=np.float32)
+    
+    return kx, ky
+
 
 def run_benchmark(
     perf_func: callable,
@@ -76,6 +96,7 @@ def run_benchmark(
     dx=0,
     dy=0,
     is_sobel=False,
+    is_scharr=False,
     warmup: int = 20,
     iters: int = 1000,
     show_all: bool = False,
@@ -120,6 +141,8 @@ def run_benchmark(
     # cv2.filter2D(a_np, cv2.CV_16SC1, kernel)
     if is_sobel:
         expected = cv2.Sobel(a_np, cv2.CV_16SC1, dx, dy, ksize=ksize, scale=1, delta=0)
+    elif is_scharr:
+        expected = cv2.Scharr(a_np, cv2.CV_16SC1, dx, dy, scale=1, delta=0)
     else:
         expected = cv2.Laplacian(a_np, cv2.CV_16SC1, ksize=ksize, scale=1, delta=0)
     
@@ -149,18 +172,25 @@ for H, W, K in Sizes:
     
     if K == 1:
         kx, ky = get_sobel_kernel(K, 1, 0, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 3, 1, 'sobel', out, dx=1, dy=0, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 3, 1, 'sobel  X', out, dx=1, dy=0, is_sobel=True)
         kx, ky = get_sobel_kernel(K, 0, 1, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 1, 3, 'sobel', out, dx=0, dy=1, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 1, 3, 'sobel  Y', out, dx=0, dy=1, is_sobel=True)
         kx, ky = get_sobel_kernel(K, 1, 1, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 3, 3, 'sobel', out, dx=1, dy=1, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, 3, 3, 'sobel XY', out, dx=1, dy=1, is_sobel=True)
     else:
         kx, ky = get_sobel_kernel(K, 1, 0, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel', out, dx=1, dy=0, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel  X', out, dx=1, dy=0, is_sobel=True)
         kx, ky = get_sobel_kernel(K, 0, 1, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel', out, dx=0, dy=1, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel  Y', out, dx=0, dy=1, is_sobel=True)
         kx, ky = get_sobel_kernel(K, 1, 1, False)
-        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel', out, dx=1, dy=1, is_sobel=True)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'sobel XY', out, dx=1, dy=1, is_sobel=True)
+
+    if K == 3:
+        kx, ky = get_scharr_kernel(1, 0)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'scharr X', out, dx=1, dy=0, is_scharr=True)
+        kx, ky = get_scharr_kernel(0, 1)
+        run_benchmark(lib.sep_filter2D_uint8_t_int16_t_int8_t, a, tmp, None, None, kx, ky, K, K, K, 'scharr Y', out, dx=0, dy=1, is_scharr=True)
+
 
     if K >= 5:
         print("-" * 85)
@@ -169,16 +199,17 @@ for H, W, K in Sizes:
         tmp2 = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
         out = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
         kx, ky = get_laplacian_kernel(K)
-        run_benchmark(lib.laplacian_uint8_t_int16_t_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian', out, dx=0, dy=0)
+        run_benchmark(lib.laplacian_uint8_t_int16_t_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian i16', out, dx=0, dy=0)
 
         tmp0 = torch.zeros((H,W), dtype=torch.int32).cuda().contiguous()
         tmp1 = torch.zeros((H,W), dtype=torch.int32).cuda().contiguous()
         tmp2 = torch.zeros((H,W), dtype=torch.int32).cuda().contiguous()
         out = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
-        run_benchmark(lib.laplacian_uint8_t_int32_t_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian', out, dx=0, dy=0)
+        run_benchmark(lib.laplacian_uint8_t_int32_t_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian i32', out, dx=0, dy=0)
 
         tmp0 = torch.zeros((H,W), dtype=torch.float32).cuda().contiguous()
         tmp1 = torch.zeros((H,W), dtype=torch.float32).cuda().contiguous()
         tmp2 = torch.zeros((H,W), dtype=torch.float32).cuda().contiguous()
         out = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
-        run_benchmark(lib.laplacian_uint8_t_float_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian', out, dx=0, dy=0)
+        run_benchmark(lib.laplacian_uint8_t_float_int16_t_int8_t, a, tmp0, tmp1, tmp2, kx, ky, K, K, K, 'laplacian f32', out, dx=0, dy=0)
+    print("-" * 85)
