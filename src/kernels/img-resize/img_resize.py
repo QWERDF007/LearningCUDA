@@ -96,12 +96,14 @@ def run_benchmark(
 
 # Hs = [2, 45, 151, 224, 1024]
 # Ws = [2, 200, 320, 448, 2048]
-Hs = [2048]
+Hs = [1024]
 Ws = [1024]
 Ss = [0.3, 0.5, 0.9, 1.7, 2.0, 2.4]
+# Ss = [0.1]
 Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
-INTER_TYPES =['INTER_LINEAR', 'INTER_NEAREST', 'INTER_CUBIC', 'INTER_LANCZOS4', 'INTER_AREA', 'ALL']
-INTER_TYPE = 'INTER_AREA'
+INTER_TYPES =['INTER_LINEAR', 'INTER_NEAREST', 'INTER_CUBIC', 'INTER_LANCZOS4', 'INTER_AREA', 'INTER_NEAREST_EXACT', 'INTER_LINEAR_EXACT', 'ALL']
+INTER_TYPE = 'INTER_LINEAR_EXACT'
+
 
 for H, W, S in Sizes:
     print("-" * 85)
@@ -172,6 +174,14 @@ for H, W, S in Sizes:
             run_benchmark(lib.resize_area_bilinear_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
             run_benchmark(lib.u8_resize_area_bilinear_uint8_t_float, a, dH, dW, "u8x_area_float", interpolation=cv2.INTER_AREA)
 
+    if INTER_TYPE == 'INTER_NEAREST_EXACT' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_bitexact_uint8_t_uint8_t, a, dH, dW, "u8_nearest_bitexact_u8", interpolation=cv2.INTER_NEAREST_EXACT)
+    
+    if INTER_TYPE == 'INTER_LINEAR_EXACT' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_bitexact_uint8_t_float, a, dH, dW, "u8_bilinear_bitexact_float", interpolation=cv2.INTER_LINEAR_EXACT)
+        run_benchmark(lib.resize_bilinear_bitexact_uint8_t_double, a, dH, dW, "u8_bilinear_bitexact_double", interpolation=cv2.INTER_LINEAR_EXACT)
+
+
     print("-" * 85)
     print(" " * 40 + f"dH={dH}, dW={dW}, ch=3")
 
@@ -234,6 +244,14 @@ for H, W, S in Sizes:
             run_benchmark(lib.resize_area_bilinear_uint8_t_float, a, dH, dW, "u8_area_float", interpolation=cv2.INTER_AREA)
             run_benchmark(lib.resize_area_bilinear_uint8_t_double, a, dH, dW, "u8_area_double", interpolation=cv2.INTER_AREA)
             run_benchmark(lib.u8_resize_area_bilinear_uint8_t_float, a, dH, dW, "u8x_area_float", interpolation=cv2.INTER_AREA)
+
+    if INTER_TYPE == 'INTER_NEAREST_EXACT' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_nearest_bitexact_uint8_t_uint8_t, a, dH, dW, "u8_nearest_bitexact_u8", interpolation=cv2.INTER_NEAREST_EXACT)
+    
+    if INTER_TYPE == 'INTER_LINEAR_EXACT' or INTER_TYPE == 'ALL':
+        run_benchmark(lib.resize_bilinear_bitexact_uint8_t_float, a, dH, dW, "u8_bilinear_bitexact_float", interpolation=cv2.INTER_LINEAR_EXACT)
+        run_benchmark(lib.resize_bilinear_bitexact_uint8_t_double, a, dH, dW, "u8_bilinear_bitexact_double", interpolation=cv2.INTER_LINEAR_EXACT)
+
 
     print("-" * 85)
     

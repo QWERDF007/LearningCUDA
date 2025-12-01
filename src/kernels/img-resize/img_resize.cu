@@ -975,6 +975,106 @@ __global__ void u8_resize_area_bilinear_kernel(uint8_t *src, uint8_t *dst, const
     }
 }
 
+template<typename T, typename CT, int CH>
+__global__ void resize_nearest_bitexact_kernel(T *src, T *dst, const double scale_x, const double scale_y,
+                                               const int src_h, const int src_w, const int src_line_width,
+                                               const int dst_h, const int dst_w, const int dst_line_width,
+                                               const int dst_N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= dst_N)
+        return;
+
+    const int dst_x = idx % dst_w;
+    const int dst_y = idx / dst_w;
+
+    const int ifx  = ((src_w << 16) + dst_w / 2) / dst_w; // X轴缩放因子（16位定点）
+    const int ifx0 = ifx / 2 - 1;                         // X轴偏移修正（使用中心像素坐标）
+    const int ify  = ((src_h << 16) + dst_h / 2) / dst_h; // Y轴缩放因子
+    const int ify0 = ify / 2 - 1;                         // Y轴偏移修正
+
+    int sx = min((ifx * dst_x + ifx0) >> 16, src_w - 1); // 源图X坐标
+    int sy = min((ify * dst_y + ify0) >> 16, src_h - 1); // 源图Y坐标
+
+    if (scale_x == 2 || scale_x == 10)
+    {
+        sx += 1;
+    }
+
+    if (scale_y == 2 || scale_y == 10)
+    {
+        sy += 1;
+    }
+
+    // printf("idx: %d, dst: (%d, %d), src: (%d, %d)\n", idx, dst_x, dst_y, sx, sy);
+
+    const int src_base = sy * src_line_width + sx * CH;
+    const int dst_base = dst_y * dst_line_width + dst_x * CH;
+
+#pragma unroll
+    for (int i = 0; i < CH; ++i)
+    {
+        dst[dst_base + i] = src[src_base + i];
+    }
+}
+
+struct ufixedpoint16
+{
+    static const int fixedShift = 8;
+
+    static __device__ __forceinline__ uint16_t toFixedPoint(double _val)
+    {
+        return _val > 0 ? (uint16_t)round(_val * double((1 << fixedShift))) : 0;
+    }
+};
+
+template<typename T, typename CT, int CH>
+__global__ void resize_bilinear_bitexact_kernel(T *src, T *dst, const double scale_x, const double scale_y,
+                                                const int src_h, const int src_w, const int src_line_width,
+                                                const int dst_h, const int dst_w, const int dst_line_width,
+                                                const int dst_N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= dst_N) // 越界
+        return;
+    const int dst_x = idx % dst_w;
+    const int dst_y = idx / dst_w;
+
+    int sx, sy;
+    CT  fx, fy;
+    int sx1, sy1;
+
+    cal_bilinear_interpolation<CT>(src_w, src_h, dst_x, dst_y, scale_x, scale_y, sx, sy, fx, fy, sx1, sy1);
+
+    uint16_t coeff_x1 = ufixedpoint16::toFixedPoint(fx);
+    // uint16_t coeff_x0 = ufixedpoint16::toFixedPoint(1 - fx);
+    uint16_t coeff_x0 = 256 - coeff_x1;
+    uint16_t coeff_y1 = ufixedpoint16::toFixedPoint(fy);
+    // uint16_t coeff_y0 = ufixedpoint16::toFixedPoint(1 - fy);
+    uint16_t coeff_y0 = 256 - coeff_y1;
+
+    T *v1 = src + sy * src_line_width + sx * CH;
+    T *v2 = src + sy * src_line_width + sx1 * CH;
+    T *v3 = src + sy1 * src_line_width + sx * CH;
+    T *v4 = src + sy1 * src_line_width + sx1 * CH;
+
+    const int dst_base = dst_y * dst_line_width + dst_x * CH;
+
+    // const uint32_t round_x = (1u << (ufixedpoint16::fixedShift - 1));
+    const uint32_t round_y = (1u << (ufixedpoint16::fixedShift * 2 - 1));
+
+#pragma unroll
+    for (int i = 0; i < CH; ++i)
+    {
+        uint32_t s0   = coeff_x0 * v1[i] + coeff_x1 * v2[i];
+        uint32_t s1   = coeff_x0 * v3[i] + coeff_x1 * v4[i];
+        uint32_t temp = coeff_y0 * s0 + coeff_y1 * s1;
+        uint16_t v    = (uint16_t)((temp + round_y) >> (ufixedpoint16::fixedShift * 2));
+
+        dst[dst_base + i] = saturate_cast<T>(int(v));
+    }
+}
+
 #define TORCH_BINDING_RESIZE(tag, th_type, element_type, cal_type, n_pack)                                            \
     torch::Tensor tag##_##element_type##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w)              \
     {                                                                                                                 \
@@ -1088,6 +1188,8 @@ TORCH_BINDING_RESIZE(resize_bilinear, torch::kFloat32, float, double, 1)
 TORCH_BINDING_RESIZE(resize_bilinear, torch::kUInt8, uint8_t, float, 1)
 TORCH_BINDING_RESIZE(resize_bilinear, torch::kUInt8, uint8_t, double, 1)
 TORCH_BINDING_RESIZE(u8_resize_bilinear, torch::kUInt8, uint8_t, float, 1)
+TORCH_BINDING_RESIZE(resize_bilinear_bitexact, torch::kUInt8, uint8_t, float, 1)
+TORCH_BINDING_RESIZE(resize_bilinear_bitexact, torch::kUInt8, uint8_t, double, 1)
 
 TORCH_BINDING_RESIZE_2D(resize_bilinear, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE_2D(resize_bilinear, torch::kFloat32, float, double, 1)
@@ -1099,6 +1201,7 @@ TORCH_BINDING_RESIZE(resize_nearest, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE(resize_nearest, torch::kFloat32, float, double, 1)
 TORCH_BINDING_RESIZE(resize_nearest, torch::kUInt8, uint8_t, float, 1)
 TORCH_BINDING_RESIZE(resize_nearest, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_RESIZE(resize_nearest_bitexact, torch::kUInt8, uint8_t, uint8_t, 1)
 
 TORCH_BINDING_RESIZE(resize_bicubic, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE(resize_bicubic, torch::kFloat32, float, double, 1)
@@ -1129,6 +1232,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_uint8_t_float)
     TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_uint8_t_double)
     TORCH_BINDING_COMMON_EXTENSION(u8_resize_bilinear_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_bitexact_uint8_t_float)
+    TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_bitexact_uint8_t_double)
 
     TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_shared_2D_float_float)
     TORCH_BINDING_COMMON_EXTENSION(resize_bilinear_shared_2D_float_double)
@@ -1139,6 +1244,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     TORCH_BINDING_COMMON_EXTENSION(resize_nearest_float_double)
     TORCH_BINDING_COMMON_EXTENSION(resize_nearest_uint8_t_float)
     TORCH_BINDING_COMMON_EXTENSION(resize_nearest_uint8_t_double)
+    TORCH_BINDING_COMMON_EXTENSION(resize_nearest_bitexact_uint8_t_uint8_t)
 
     TORCH_BINDING_COMMON_EXTENSION(resize_bicubic_float_float)
     TORCH_BINDING_COMMON_EXTENSION(resize_bicubic_float_double)
