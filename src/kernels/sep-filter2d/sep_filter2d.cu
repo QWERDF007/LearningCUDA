@@ -134,6 +134,7 @@ __global__ void elementwise_add_kernel(T *a, T *b, T *c, const int N)
     }
 
 TORCH_BINDING_FILTER(torch::kUInt8, uint8_t, int16_t, int8_t, 1)
+TORCH_BINDING_FILTER(torch::kUInt8, uint8_t, uint8_t, int8_t, 1)
 TORCH_BINDING_FILTER_LAPLACIAN(torch::kUInt8, uint8_t, int16_t, int16_t, int8_t, 1)
 TORCH_BINDING_FILTER_LAPLACIAN(torch::kUInt8, uint8_t, int32_t, int16_t, int8_t, 1)
 TORCH_BINDING_FILTER_LAPLACIAN(torch::kUInt8, uint8_t, float, int16_t, int8_t, 1)
@@ -141,6 +142,7 @@ TORCH_BINDING_FILTER_LAPLACIAN(torch::kUInt8, uint8_t, float, int16_t, int8_t, 1
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(sep_filter2D_uint8_t_int16_t_int8_t)
+    TORCH_BINDING_COMMON_EXTENSION(sep_filter2D_uint8_t_uint8_t_int8_t)
     TORCH_BINDING_COMMON_EXTENSION(laplacian_uint8_t_int16_t_int16_t_int8_t)
     TORCH_BINDING_COMMON_EXTENSION(laplacian_uint8_t_int32_t_int16_t_int8_t)
     TORCH_BINDING_COMMON_EXTENSION(laplacian_uint8_t_float_int16_t_int8_t)

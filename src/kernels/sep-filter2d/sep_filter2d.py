@@ -145,6 +145,7 @@ def run_benchmark(
         expected = cv2.Scharr(a_np, cv2.CV_16SC1, dx, dy, scale=1, delta=0)
     else:
         expected = cv2.Laplacian(a_np, cv2.CV_16SC1, ksize=ksize, scale=1, delta=0)
+    # expected = cv2.convertScaleAbs(expected)
     
     mismatch_info = compute_accuracy_info(out_np.astype(expected.dtype), expected)
 

@@ -54,8 +54,8 @@ def get_sobel_kernel(ksize, dx, dy, normalize=False):
     # kx, ky 返回的是列向量 (kx: ksize x 1, ky: ksize x 1)
     kx, ky = cv2.getDerivKernels(dx, dy, ksize, normalize=normalize)
     # 生成 2D kernel（外积）
-    sobel_kernel = np.outer(kx.reshape(-1), ky.reshape(-1))
-    return sobel_kernel.T
+    sobel_kernel = np.outer(ky, kx)
+    return sobel_kernel
 
 
 
@@ -95,6 +95,57 @@ def get_laplacian_kernel(ksize):
         sobel_kernel2 = np.outer(kx, ky)
         return sobel_kernel.T, sobel_kernel2.T
 
+def get_gaussian_sigma(kernel_size):
+    """
+    计算sigma值，模拟OpenCV的默认行为
+    与CUDA代码中的get_gaussian_sigma函数保持一致
+    """
+    return 0.3 * ((kernel_size - 1) * 0.5 - 1) + 0.8
+
+def compute_gaussian_kernel_opencv(kernel_size, sigma=None, ktype=6, norm=False):
+    """
+    使用OpenCV计算高斯核并转换为PyTorch Tensor
+    
+    Args:
+        kernel_size: 核大小（奇数）或者元组 (ksize_x, ksize_y)
+        sigma: 标准差，可以是单个值、元组 (sigma_x, sigma_y) 或 None
+    
+    Returns:
+        torch.Tensor: 高斯核权重，形状为 (kernel_size_y, kernel_size_x)
+    """
+    # 处理kernel_size参数
+    if isinstance(kernel_size, (tuple, list)):
+        ksize_x, ksize_y = kernel_size
+    else:
+        ksize_x = ksize_y = kernel_size
+    
+    # 处理sigma参数
+    if sigma is None:
+        sigma_x = get_gaussian_sigma(ksize_x)
+        sigma_y = get_gaussian_sigma(ksize_y)
+    elif isinstance(sigma, (tuple, list)):
+        sigma_x, sigma_y = sigma
+    else:
+        sigma_x = sigma_y = sigma
+    
+    # 使用OpenCV的getGaussianKernel函数计算一维高斯核
+    kernel_1d_x = cv2.getGaussianKernel(ksize_x, sigma_x, ktype=ktype)
+    kernel_1d_y = cv2.getGaussianKernel(ksize_y, sigma_y, ktype=ktype)
+
+    # 计算2D高斯核：外积
+    if not norm:
+        kernel_2d = np.outer(kernel_1d_y, kernel_1d_x)
+    else:
+        kernel_1d_x_norm = np.round(kernel_1d_x / kernel_1d_x[0])
+        kernel_1d_y_norm = np.round(kernel_1d_y / kernel_1d_y[0])
+        
+        kernel_2d_norm = np.outer(kernel_1d_x_norm, kernel_1d_y_norm)
+        kernel_2d = kernel_2d_norm / np.sum(kernel_2d_norm)
+    
+    # 转换为PyTorch Tensor并移动到GPU
+    kernel_tensor = torch.from_numpy(kernel_2d.astype(np.float32)).cuda().contiguous()
+    
+    return kernel_tensor, sigma_x, sigma_y
 
 def run_benchmark(
     perf_func: callable,
@@ -108,11 +159,13 @@ def run_benchmark(
     tag: str,
     out: Optional[torch.Tensor] = None,
     tmp: torch.Tensor = None,
-    kernely: torch.Tensor = None,
+    gaussian_kernel: torch.Tensor = None,
+    sigma=None,
     warmup: int = 20,
     iters: int = 1000,
     is_scharr = False,
     is_laplacian = False,
+    is_gaussian = False,
     show_all: bool = False,
 ):
     """
@@ -120,9 +173,9 @@ def run_benchmark(
     用于测量CUDA核函数的执行时间性能
     """
     # warmup
-    if tmp is not None and kernely is not None:
+    if tmp is not None and gaussian_kernel is not None:
         for i in range(warmup):
-            perf_func(a, out, tmp, kernel, kernely, ksh, ksw)
+            perf_func(a, out, tmp, gaussian_kernel, kernel, ksh, ksw)
     else:
         for i in range(warmup):
             perf_func(a, out, kernel, ksh, ksw)
@@ -131,9 +184,9 @@ def run_benchmark(
     
     start = time.time()
 
-    if tmp is not None and kernely is not None:
+    if tmp is not None and gaussian_kernel is not None:
         for i in range(iters):
-            perf_func(a, out, tmp, kernel, kernely, ksh, ksw)
+            perf_func(a, out, tmp, gaussian_kernel, kernel, ksh, ksw)
     else:
         for i in range(iters):
             perf_func(a, out, kernel, ksh, ksw)
@@ -152,6 +205,10 @@ def run_benchmark(
         expected = cv2.Scharr(a_np, cv2.CV_16SC1, dx, dy, scale=1, delta=0)
     elif is_laplacian:
         expected = cv2.Laplacian(a_np, cv2.CV_16SC1, ksize=ksize, scale=1, delta=0, borderType=cv2.BORDER_REFLECT_101)
+    elif is_gaussian:
+        sigma_x, sigma_y = sigma
+        expected = cv2.GaussianBlur(a_np, (ksize, ksize), sigmaX=sigma_x, sigmaY=sigma_y)
+        expected = cv2.Laplacian(expected, cv2.CV_16SC1, ksize=ksize, scale=1, delta=0, borderType=cv2.BORDER_REFLECT_101)
     else:
         expected = cv2.Sobel(a_np, cv2.CV_16SC1, dx, dy, ksize=ksize, scale=1, delta=0)
     expected = cv2.convertScaleAbs(expected)
@@ -167,8 +224,8 @@ def run_benchmark(
     return out, mean_time, tag
 
 
-Hs = [4096]
-Ws = [4096]
+Hs = [1024]
+Ws = [1024]
 Ks = [1, 3, 5, 7]
 Sizes = [(H, W, K) for H in Hs for W in Ws for K in Ks]
 
@@ -177,7 +234,7 @@ for H, W, K in Sizes:
     print(" " * 40 + f"H={H}, W={W}, K={K}, ch=1")
 
     a = torch.randint(0, 256, (H, W), dtype=torch.uint8).cuda().contiguous()
-    out = torch.zeros((H,W), dtype=torch.int16).cuda().contiguous()
+    out = torch.zeros((H,W), dtype=torch.uint8).cuda().contiguous()
     
     sobel_kernel_x = get_sobel_kernel(K, 1, 0)
     sobel_kernel_y = get_sobel_kernel(K, 0, 1)
@@ -188,13 +245,19 @@ for H, W, K in Sizes:
     sobel_kernel_xy_tensor = torch.from_numpy(sobel_kernel_xy.astype(np.int8)).cuda().contiguous()
 
     if K == 1:
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, 1, 3,  'sobel x', out, iters=1000)
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, 3, 1, 'sobel y', out, iters=1000)
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, 3, 3, 'sobel xy', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, 1, 3,  'sobel x', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, 3, 1, 'sobel y', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, 3, 3, 'sobel xy', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, 1, 3,  'sobel x', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, 3, 1, 'sobel y', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, 3, 3, 'sobel xy', out, iters=1000)
     else:
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, K, K,  'sobel x', out, iters=1000)
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, K, K, 'sobel y', out, iters=1000)
-        run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, K, K, 'sobel xy', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, K, K,  'sobel x', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, K, K, 'sobel y', out, iters=1000)
+        # run_benchmark(lib.sobel_uint8_t_int16_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, K, K, 'sobel xy', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_x_tensor, 1, 0, K, K, K,  'sobel x', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_y_tensor, 0, 1, K, K, K, 'sobel y', out, iters=1000)
+        run_benchmark(lib.sobel_uint8_t_uint8_t_int8_t, a, sobel_kernel_xy_tensor, 1, 1, K, K, K, 'sobel xy', out, iters=1000)
    
     print("-" * 85)
 
@@ -203,19 +266,35 @@ for H, W, K in Sizes:
         scharr_kernel_y = get_scharr_kernel(0, 1, False)
         scharr_kernel_x_tensor = torch.from_numpy(scharr_kernel_x.astype(np.int8)).cuda().contiguous()
         scharr_kernel_y_tensor = torch.from_numpy(scharr_kernel_y.astype(np.int8)).cuda().contiguous()
-        run_benchmark(lib.scharr_uint8_t_int16_t_int8_t, a, scharr_kernel_x_tensor, 1, 0, 3, 3, 3, 'scharr x', out, is_scharr=True, iters=1000)
-        run_benchmark(lib.scharr_uint8_t_int16_t_int8_t, a, scharr_kernel_y_tensor, 0, 1, 3, 3, 3, 'scharr y', out, is_scharr=True, iters=1000)
+        # run_benchmark(lib.scharr_uint8_t_int16_t_int8_t, a, scharr_kernel_x_tensor, 1, 0, 3, 3, 3, 'scharr x', out, is_scharr=True, iters=1000)
+        # run_benchmark(lib.scharr_uint8_t_int16_t_int8_t, a, scharr_kernel_y_tensor, 0, 1, 3, 3, 3, 'scharr y', out, is_scharr=True, iters=1000)
+        run_benchmark(lib.scharr_uint8_t_uint8_t_int8_t, a, scharr_kernel_x_tensor, 1, 0, 3, 3, 3, 'scharr x', out, is_scharr=True, iters=1000)
+        run_benchmark(lib.scharr_uint8_t_uint8_t_int8_t, a, scharr_kernel_y_tensor, 0, 1, 3, 3, 3, 'scharr y', out, is_scharr=True, iters=1000)
 
     print("-" * 85)
     
     if K == 1:
         laplacian_kernel = get_laplacian_kernel(K)
         laplacian_kernel_tensor = torch.from_numpy(laplacian_kernel.astype(np.int8)).cuda().contiguous()
-        run_benchmark(lib.laplacian_uint8_t_int16_t_int8_t, a, laplacian_kernel_tensor, 0, 0, 1, 3, 3, 'laplacian', out, 
+        # run_benchmark(lib.laplacian_uint8_t_int16_t_int8_t, a, laplacian_kernel_tensor, 0, 0, 1, 3, 3, 'laplacian', out, 
+        #     is_laplacian=True, iters=1000)
+        run_benchmark(lib.laplacian_uint8_t_uint8_t_int8_t, a, laplacian_kernel_tensor, 0, 0, 1, 3, 3, 'laplacian', out, 
             is_laplacian=True, iters=1000)
+        gaussian_weights, *sigma = compute_gaussian_kernel_opencv(K, None)
+        tmp = torch.zeros((H,W), dtype=torch.uint8).cuda().contiguous()
+        run_benchmark(lib.gaussian_laplacian_uint8_t_uint8_t_int8_t, a, laplacian_kernel_tensor, 0, 0, 1, 1, 1, 'gaussian_laplacian', out, 
+            tmp=tmp, gaussian_kernel=gaussian_weights, sigma=sigma, is_gaussian=True, iters=1000)
     elif K == 3:
         laplacian_kernel = get_laplacian_kernel(K)
         laplacian_kernel_tensor = torch.from_numpy(laplacian_kernel.astype(np.int8)).cuda().contiguous()
-        run_benchmark(lib.laplacian_uint8_t_int16_t_int8_t, a, laplacian_kernel_tensor, 0, 0, K, K, K, 'laplacian', out, 
+        # run_benchmark(lib.laplacian_uint8_t_int16_t_int8_t, a, laplacian_kernel_tensor, 0, 0, K, K, K, 'laplacian', out, 
+        #     is_laplacian=True, iters=1000)
+        run_benchmark(lib.laplacian_uint8_t_uint8_t_int8_t, a, laplacian_kernel_tensor, 0, 0, K, K, K, 'laplacian', out, 
             is_laplacian=True, iters=1000)
+
+        gaussian_weights, *sigma = compute_gaussian_kernel_opencv(K, None)
+        print(gaussian_weights)
+        tmp = torch.zeros((H,W), dtype=torch.uint8).cuda().contiguous()
+        run_benchmark(lib.gaussian_laplacian_uint8_t_uint8_t_int8_t, a, laplacian_kernel_tensor, 0, 0, K, K, K, 'gaussian_laplacian', out, 
+            tmp=tmp, gaussian_kernel=gaussian_weights, sigma=sigma, is_gaussian=True, iters=1000)
     
