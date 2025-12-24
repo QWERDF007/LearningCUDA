@@ -307,6 +307,63 @@ __global__ void hysteresisDevice(int32_t *map, int *queue, int *queue_head, int 
     }
 }
 
+__device__ int d_changed;
+
+__global__ void hysteresisKernelDevice(int32_t *mapA, int32_t *mapB, int width, int height)
+{
+    int N = width * height;
+
+    while (true)
+    {
+        if (threadIdx.x == 0 && blockIdx.x == 0)
+            d_changed = 0;
+        __syncthreads();
+
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < N)
+        {
+            int32_t v = mapA[idx];
+
+            if (v == 1)
+            {
+                int x = idx % width;
+                int y = idx / width;
+
+                if (x > 0 && x < width - 1 && y > 0 && y < height - 1)
+                {
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            if (dx == 0 && dy == 0)
+                                continue;
+                            if (mapA[idx + dy * width + dx] == 2)
+                            {
+                                v = 2;
+                                atomicExch(&d_changed, 1);
+                                goto done;
+                            }
+                        }
+                }
+            }
+
+done:
+            mapB[idx] = v;
+        }
+
+        __syncthreads();
+
+        if (d_changed == 0)
+            break;
+
+        // swap
+        int32_t *tmp = mapA;
+        mapA         = mapB;
+        mapB         = tmp;
+
+        __syncthreads();
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////
 // 最终输出 255 / 0
 ////////////////////////////////////////////////////////////////////////////////////
@@ -334,8 +391,9 @@ void cudaCanny(torch::Tensor src, torch::Tensor dst, torch::Tensor kernelx, torc
     auto dx_options      = torch::TensorOptions().dtype(torch::kUInt16).device(torch::kCUDA, 0);
     auto dy_options      = torch::TensorOptions().dtype(torch::kUInt16).device(torch::kCUDA, 0);
 
-    torch::Tensor d_mag = torch::zeros({N}, mag_options);
-    torch::Tensor d_map = torch::zeros({N}, map_options);
+    torch::Tensor d_mag  = torch::zeros({N}, mag_options);
+    torch::Tensor d_map  = torch::zeros({N}, map_options);
+    torch::Tensor d_mapB = torch::zeros({N}, map_options);
 
     torch::Tensor d_changed    = torch::zeros({1}, changed_options);
     torch::Tensor d_queue      = torch::zeros({N}, changed_options);
@@ -393,29 +451,37 @@ void cudaCanny(torch::Tensor src, torch::Tensor dst, torch::Tensor kernelx, torc
                                         reinterpret_cast<int32_t *>(d_map.data_ptr()), W, H, low, high, L2gradient);
 
     // 3. Hysteresis
-    // int changed = 1;
-    // while (changed)
-    // {
-    //     cudaMemset(reinterpret_cast<int32_t *>(d_changed.data_ptr()), 0, sizeof(int32_t));
-
-    //     hysteresisKernel<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
-    //                                       reinterpret_cast<int32_t *>(d_changed.data_ptr()), W, H);
-
-    //     cudaMemcpy(&changed, reinterpret_cast<int32_t *>(d_changed.data_ptr()), sizeof(int32_t),
-    //                cudaMemcpyDeviceToHost);
-    // }
+    int changed = 1;
+    while (changed)
     {
-        // 1. 初始化队列
-        buildInitialQueue<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
-                                           reinterpret_cast<int32_t *>(d_queue.data_ptr()),
-                                           reinterpret_cast<int32_t *>(d_queue_tail.data_ptr()), W, H);
+        cudaMemset(reinterpret_cast<int32_t *>(d_changed.data_ptr()), 0, sizeof(int32_t));
 
-        // 2. 完整 hysteresis（一次 kernel）
-        hysteresisDevice<<<128, 256>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
-                                       reinterpret_cast<int32_t *>(d_queue.data_ptr()),
-                                       reinterpret_cast<int32_t *>(d_queue_head.data_ptr()),
-                                       reinterpret_cast<int32_t *>(d_queue_tail.data_ptr()), W, H);
+        hysteresisKernel<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
+                                          reinterpret_cast<int32_t *>(d_changed.data_ptr()), W, H);
+
+        cudaMemcpy(&changed, reinterpret_cast<int32_t *>(d_changed.data_ptr()), sizeof(int32_t),
+                   cudaMemcpyDeviceToHost);
     }
+
+    // {
+    //     // 1. 初始化队列
+    //     buildInitialQueue<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
+    //                                        reinterpret_cast<int32_t *>(d_queue.data_ptr()),
+    //                                        reinterpret_cast<int32_t *>(d_queue_tail.data_ptr()), W, H);
+
+    //     // 2. 完整 hysteresis（一次 kernel）
+    //     hysteresisDevice<<<128, 256>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
+    //                                    reinterpret_cast<int32_t *>(d_queue.data_ptr()),
+    //                                    reinterpret_cast<int32_t *>(d_queue_head.data_ptr()),
+    //                                    reinterpret_cast<int32_t *>(d_queue_tail.data_ptr()), W, H);
+    // }
+
+    // {
+    //     dim3 block(THREADS);
+    //     dim3 grid(divUp(N, THREADS));
+    //     hysteresisKernelDevice<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),
+    //                                             reinterpret_cast<int32_t *>(d_mapB.data_ptr()), W, H);
+    // }
 
     // 4. Final: map → dst
     finalKernel<<<grid, block>>>(reinterpret_cast<int32_t *>(d_map.data_ptr()),

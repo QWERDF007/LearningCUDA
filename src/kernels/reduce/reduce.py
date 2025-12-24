@@ -113,4 +113,8 @@ if __name__ == "__main__":
         run_benchmark(lib.reduce_sum_atomic_float_double, a, "reduce_sum_atomic_double")
         run_benchmark(lib.reduce_sum_shared_float_float, a, "reduce_sum_shared_float")
         run_benchmark(lib.reduce_sum_shared_float_double, a, "reduce_sum_shared_double")
+        run_benchmark(lib.reduce_sum_shared_atomic_float_float, a, "reduce_sum_shared_atomic_float")
+        run_benchmark(lib.reduce_sum_shared_atomic_float_double, a, "reduce_sum_shared_atomic_double")
+        run_benchmark(lib.reduce_sum_shared_atomic2_float_float, a, "reduce_sum_shared_atomic2_float")
+        run_benchmark(lib.reduce_sum_shared_atomic2_float_double, a, "reduce_sum_shared_atomic2_double")
         print("-" * 85)
