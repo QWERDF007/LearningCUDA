@@ -380,6 +380,9 @@ __global__ void init_stats_kernel(uint32_t *g_area, int *g_min_x, int *g_min_y, 
     }
 }
 
+/**
+ * @brief Butterfly Reduction（蝴蝶归约）算法（时间复杂度 O(logN)）
+ */
 __global__ void calc_stats_kernel(const uint32_t *g_labels, uint32_t *g_area, int *g_min_x, int *g_min_y, int *g_max_x,
                                   int *g_max_y, const int W, const int H, const int max_labels)
 {
@@ -409,10 +412,14 @@ __global__ void calc_stats_kernel(const uint32_t *g_labels, uint32_t *g_area, in
 }
 
 /**
- * @brief Butterfly Reduction（蝴蝶归约）算法（时间复杂度 O(logN)）
+ * @brief Warp 级优化的统计 kernel（使用分段归约）
+ * 
+ * 使用 __match_any_sync + __shfl_up_sync 实现 warp 内同 label 像素的归约。
+ * 从低 lane 向高 lane 传播极值，最终由每个分段的最高 lane 写入全局内存。
  */
-__global__ void calc_stats_kernel_optimized(const uint32_t *g_labels, uint32_t *g_area, int *g_min_x, int *g_min_y,
-                                            int *g_max_x, int *g_max_y, const int W, const int H, const int max_labels)
+__global__ void calc_stats_kernel_optimized_fast(const uint32_t *g_labels, uint32_t *g_area, int *g_min_x, int *g_min_y,
+                                                 int *g_max_x, int *g_max_y, const int W, const int H,
+                                                 const int max_labels)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -453,21 +460,20 @@ __global__ void calc_stats_kernel_optimized(const uint32_t *g_labels, uint32_t *
     int my_min_y = y;
     int my_max_y = y;
 
-// 4. Butterfly Reduction (蝴蝶归约)
-// 这一步必须所有线程都执行！不能放在 if (leader) 里面。
-// 通过 XOR 交换，在 5 步内（32=2^5）让每个线程都获得同组内的极值。
+// 4. 分段归约（Segmented Reduction）
+// 使用 __shfl_up_sync 从低 lane 向高 lane 传播，确保同 label 的所有线程数据汇聚到最高 lane
 #pragma unroll
-    for (int offset = 16; offset > 0; offset /= 2)
+    for (int offset = 1; offset < 32; offset *= 2)
     {
         // 从“对友”线程获取数据
-        int peer_min_x = __shfl_xor_sync(mask, my_min_x, offset);
-        int peer_max_x = __shfl_xor_sync(mask, my_max_x, offset);
-        int peer_min_y = __shfl_xor_sync(mask, my_min_y, offset);
-        int peer_max_y = __shfl_xor_sync(mask, my_max_y, offset);
+        int peer_min_x = __shfl_up_sync(0xffffffff, my_min_x, offset);
+        int peer_max_x = __shfl_up_sync(0xffffffff, my_max_x, offset);
+        int peer_min_y = __shfl_up_sync(0xffffffff, my_min_y, offset);
+        int peer_max_y = __shfl_up_sync(0xffffffff, my_max_y, offset);
 
         // 检查：只有当“对友”线程确实在 mask 中（即具有相同 label）时，才合并数据。
         // (lane_id ^ offset) 计算的是当前 offset 下的对友 lane_id。
-        if (mask & (1 << (lane_id ^ offset)))
+        if (lane_id >= offset && (mask & (1 << (lane_id - offset))))
         {
             my_min_x = min(my_min_x, peer_min_x);
             my_max_x = max(my_max_x, peer_max_x);
@@ -476,12 +482,11 @@ __global__ void calc_stats_kernel_optimized(const uint32_t *g_labels, uint32_t *
         }
     }
 
-    // 5. 选举 Leader 并写入全局内存
-    // __ffs(mask) 找到最低位的 1，作为 Leader
-    int leader = __ffs(mask) - 1;
+    // 5. 找到 mask 中最高位的 lane 作为 leader
+    int highest_lane = 31 - __clz(mask);
 
-    // 只有有效的前景像素，且是 Leader 的线程才执行原子写
-    if (is_valid && lane_id == leader)
+    // 只有最高 lane 的线程写入全局内存
+    if (is_valid && lane_id == highest_lane)
     {
         // A. 统计数量：直接计算 mask 中 1 的个数
         int count = __popc(mask);
@@ -493,6 +498,120 @@ __global__ void calc_stats_kernel_optimized(const uint32_t *g_labels, uint32_t *
         atomicMin(&g_min_y[label], my_min_y);
         atomicMax(&g_max_x[label], my_max_x);
         atomicMax(&g_max_y[label], my_max_y);
+    }
+}
+
+/**
+ * @brief Warp 级优化的统计 kernel（使用分段归约）
+ * 
+ * 使用 __match_any_sync + 双向 shuffle 实现 warp 内同 label 像素的归约。
+ * 先从低 lane 向高 lane 传播，再从高 lane 向低 lane 传播，确保所有同 label 线程都有完整极值。
+ */
+__global__ void calc_stats_kernel_optimized(const uint32_t *g_labels, uint32_t *g_area, int *g_min_x, int *g_min_y,
+                                            int *g_max_x, int *g_max_y, const int W, const int H, const int max_labels)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // 1. Label 预处理
+    uint32_t label    = 0xFFFFFFFF;
+    bool     is_valid = (x < W && y < H);
+
+    if (is_valid)
+    {
+        uint32_t val = g_labels[y * W + x];
+        if (val > 0 && val < max_labels)
+        {
+            label = val;
+        }
+        else
+        {
+            is_valid = false;
+        }
+    }
+    else
+    {
+        is_valid = false;
+    }
+
+    // 2. Warp 级匹配
+    uint32_t mask    = __match_any_sync(0xffffffff, label);
+    int      lane_id = threadIdx.x % 32;
+
+    // 3. 局部变量初始化
+    int my_min_x = x;
+    int my_max_x = x;
+    int my_min_y = y;
+    int my_max_y = y;
+
+    // 4. 遍历 mask 中的所有线程，收集极值
+    // 使用 __shfl_sync 从每个 mask 中的线程获取数据
+#pragma unroll
+    for (int src_lane = 0; src_lane < 32; src_lane++)
+    {
+        if (mask & (1u << src_lane))
+        {
+            int peer_x = __shfl_sync(mask, x, src_lane);
+            int peer_y = __shfl_sync(mask, y, src_lane);
+            my_min_x   = min(my_min_x, peer_x);
+            my_max_x   = max(my_max_x, peer_x);
+            my_min_y   = min(my_min_y, peer_y);
+            my_max_y   = max(my_max_y, peer_y);
+        }
+    }
+
+    // 5. 找到 mask 中最高位的 lane 作为 leader
+    int highest_lane = 31 - __clz(mask);
+
+    // 只有最高 lane 的线程写入全局内存
+    if (is_valid && lane_id == highest_lane)
+    {
+        // A. 统计数量
+        int count = __popc(mask);
+        atomicAdd(&g_area[label], count);
+
+        // B. 写入归约后的边界框
+        atomicMin(&g_min_x[label], my_min_x);
+        atomicMin(&g_min_y[label], my_min_y);
+        atomicMax(&g_max_x[label], my_max_x);
+        atomicMax(&g_max_y[label], my_max_y);
+    }
+}
+
+/**
+ * @brief 紧凑化并直接输出 AoS 格式的统计信息
+ * 直接输出到 stats 数组，格式为 [x, y, w, h, area]
+ */
+__global__ void compact_stats_kernel(const uint32_t *g_in_area, const int *g_in_min_x, const int *g_in_min_y,
+                                     const int *g_in_max_x, const int *g_in_max_y, int *g_out_stats,
+                                     uint32_t *g_total_count, int max_labels, int max_output_size)
+{
+    int label = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (label < max_labels)
+    {
+        uint32_t area = g_in_area[label];
+
+        if (area > 0)
+        {
+            uint32_t pos = atomicAdd(g_total_count, 1);
+
+            if (pos >= max_output_size)
+                return;
+
+            int min_x = g_in_min_x[label];
+            int min_y = g_in_min_y[label];
+            int max_x = g_in_max_x[label];
+            int max_y = g_in_max_y[label];
+
+            // 直接写入 AoS 格式: [x, y, w, h, area]
+            int *row = g_out_stats + pos * 5;
+            row[0]   = min_x;
+            row[1]   = min_y;
+            row[2]   = max_x - min_x + 1;
+            row[3]   = max_y - min_y + 1;
+            row[4]   = static_cast<int>(area);
+        }
     }
 }
 
@@ -607,7 +726,282 @@ void connectedComponent(torch::Tensor src, torch::Tensor dst, const int connecti
     resolve_background<<<grid, block>>>(g_labels, g_image, W, H);
 }
 
+/**
+ * @brief 连通域分析并返回统计信息
+ * 
+ * @param src 输入二值图像 (H, W), uint8
+ * @param labels 输出标签图像 (H, W), uint32
+ * @param stats 输出统计信息 (N, 5), int32, 每行为 [x, y, w, h, area]
+ * @param connectivity 连通性 (4 或 8)
+ * @return 连通域数量 tensor (1,), uint32, 需要外部同步后获取值
+ */
+torch::Tensor connectedComponentWithStats(torch::Tensor src, torch::Tensor labels, torch::Tensor stats,
+                                          const int connectivity)
+{
+    CHECK_TORCH_TENSOR_DTYPE(src, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(labels, torch::kUInt32)
+    CHECK_TORCH_TENSOR_DTYPE(stats, torch::kInt32)
+    CHECK_TORCH_TENSOR_DEVICE(src)
+    CHECK_TORCH_TENSOR_DEVICE(labels)
+    CHECK_TORCH_TENSOR_DEVICE(stats)
+
+    const int H  = src.size(0);
+    const int W  = src.size(1);
+    const int CH = src.dim() == 2 ? 1 : src.size(2);
+
+    TORCH_CHECK(CH == 1, "CH must be 1")
+    TORCH_CHECK(stats.dim() == 2 && stats.size(1) == 5, "stats must be (N, 5)")
+
+    const int max_output_size = stats.size(0);
+    const int max_labels      = H * W + 1; // 最大可能的标签数
+
+    const uint8_t *g_image  = reinterpret_cast<const uint8_t *>(src.data_ptr());
+    uint32_t      *g_labels = reinterpret_cast<uint32_t *>(labels.data_ptr());
+
+    dim3 block(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3 grid(divUp(W, block.x), divUp(H, block.y));
+
+    // 1. 执行连通域标记
+    if (connectivity == 8)
+    {
+        init_labels<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        init_labels<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+
+    if (connectivity == 8)
+    {
+        label_reduction<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        label_reduction<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+    resolve_background<<<grid, block>>>(g_labels, g_image, W, H);
+
+    // 2. 分配临时统计数组 (SoA 格式)
+    auto options_u32 = torch::TensorOptions().dtype(torch::kUInt32).device(src.device());
+    auto options_i32 = torch::TensorOptions().dtype(torch::kInt32).device(src.device());
+
+    torch::Tensor g_area  = torch::zeros({max_labels}, options_u32);
+    torch::Tensor g_min_x = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_min_y = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_max_x = torch::full({max_labels}, INT_MIN, options_i32);
+    torch::Tensor g_max_y = torch::full({max_labels}, INT_MIN, options_i32);
+
+    uint32_t *d_area  = reinterpret_cast<uint32_t *>(g_area.data_ptr());
+    int      *d_min_x = reinterpret_cast<int *>(g_min_x.data_ptr());
+    int      *d_min_y = reinterpret_cast<int *>(g_min_y.data_ptr());
+    int      *d_max_x = reinterpret_cast<int *>(g_max_x.data_ptr());
+    int      *d_max_y = reinterpret_cast<int *>(g_max_y.data_ptr());
+
+    // 3. 计算统计信息
+    calc_stats_kernel<<<grid, block>>>(g_labels, d_area, d_min_x, d_min_y, d_max_x, d_max_y, W, H, max_labels);
+
+    // 4. 紧凑化输出，直接写入 AoS 格式
+    torch::Tensor g_total_count = torch::zeros({1}, options_u32);
+    uint32_t     *d_total_count = reinterpret_cast<uint32_t *>(g_total_count.data_ptr());
+    int32_t      *d_stats       = reinterpret_cast<int32_t *>(stats.data_ptr());
+
+    dim3 block1d(256);
+    dim3 grid1d(divUp(max_labels, block1d.x));
+
+    compact_stats_kernel<<<grid1d, block1d>>>(d_area, d_min_x, d_min_y, d_max_x, d_max_y, d_stats, d_total_count,
+                                              max_labels, max_output_size);
+
+    // 返回连通域数量 tensor，由外部同步后获取值
+    return g_total_count;
+}
+
+/**
+ * @brief 连通域分析并返回统计信息 (使用优化的统计 kernel)
+ * 
+ * @param src 输入二值图像 (H, W), uint8
+ * @param labels 输出标签图像 (H, W), uint32
+ * @param stats 输出统计信息 (N, 5), int32, 每行为 [x, y, w, h, area]
+ * @param connectivity 连通性 (4 或 8)
+ * @return 连通域数量 tensor (1,), uint32, 需要外部同步后获取值
+ */
+torch::Tensor connectedComponentWithStatsOptimized(torch::Tensor src, torch::Tensor labels, torch::Tensor stats,
+                                                   const int connectivity)
+{
+    CHECK_TORCH_TENSOR_DTYPE(src, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(labels, torch::kUInt32)
+    CHECK_TORCH_TENSOR_DTYPE(stats, torch::kInt32)
+    CHECK_TORCH_TENSOR_DEVICE(src)
+    CHECK_TORCH_TENSOR_DEVICE(labels)
+    CHECK_TORCH_TENSOR_DEVICE(stats)
+
+    const int H  = src.size(0);
+    const int W  = src.size(1);
+    const int CH = src.dim() == 2 ? 1 : src.size(2);
+
+    TORCH_CHECK(CH == 1, "CH must be 1")
+    TORCH_CHECK(stats.dim() == 2 && stats.size(1) == 5, "stats must be (N, 5)")
+
+    const int max_output_size = stats.size(0);
+    const int max_labels      = H * W + 1;
+
+    const uint8_t *g_image  = reinterpret_cast<const uint8_t *>(src.data_ptr());
+    uint32_t      *g_labels = reinterpret_cast<uint32_t *>(labels.data_ptr());
+
+    dim3 block(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3 grid(divUp(W, block.x), divUp(H, block.y));
+
+    // 1. 执行连通域标记
+    if (connectivity == 8)
+    {
+        init_labels<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        init_labels<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+
+    if (connectivity == 8)
+    {
+        label_reduction<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        label_reduction<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+    resolve_background<<<grid, block>>>(g_labels, g_image, W, H);
+
+    // 2. 分配临时统计数组 (SoA 格式)
+    auto options_u32 = torch::TensorOptions().dtype(torch::kUInt32).device(src.device());
+    auto options_i32 = torch::TensorOptions().dtype(torch::kInt32).device(src.device());
+
+    torch::Tensor g_area  = torch::zeros({max_labels}, options_u32);
+    torch::Tensor g_min_x = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_min_y = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_max_x = torch::full({max_labels}, INT_MIN, options_i32);
+    torch::Tensor g_max_y = torch::full({max_labels}, INT_MIN, options_i32);
+
+    uint32_t *d_area  = reinterpret_cast<uint32_t *>(g_area.data_ptr());
+    int      *d_min_x = reinterpret_cast<int *>(g_min_x.data_ptr());
+    int      *d_min_y = reinterpret_cast<int *>(g_min_y.data_ptr());
+    int      *d_max_x = reinterpret_cast<int *>(g_max_x.data_ptr());
+    int      *d_max_y = reinterpret_cast<int *>(g_max_y.data_ptr());
+
+    // 3. 计算统计信息 (使用优化的 warp 级 kernel)
+    calc_stats_kernel_optimized<<<grid, block>>>(g_labels, d_area, d_min_x, d_min_y, d_max_x, d_max_y, W, H,
+                                                 max_labels);
+
+    // 4. 紧凑化输出，直接写入 AoS 格式
+    torch::Tensor g_total_count = torch::zeros({1}, options_u32);
+    uint32_t     *d_total_count = reinterpret_cast<uint32_t *>(g_total_count.data_ptr());
+    int32_t      *d_stats       = reinterpret_cast<int32_t *>(stats.data_ptr());
+
+    dim3 block1d(256);
+    dim3 grid1d(divUp(max_labels, block1d.x));
+
+    compact_stats_kernel<<<grid1d, block1d>>>(d_area, d_min_x, d_min_y, d_max_x, d_max_y, d_stats, d_total_count,
+                                              max_labels, max_output_size);
+
+    // 返回连通域数量 tensor，由外部同步后获取值
+    return g_total_count;
+}
+
+torch::Tensor connectedComponentWithStatsOptimizedFast(torch::Tensor src, torch::Tensor labels, torch::Tensor stats,
+                                                       const int connectivity)
+{
+    CHECK_TORCH_TENSOR_DTYPE(src, torch::kUInt8)
+    CHECK_TORCH_TENSOR_DTYPE(labels, torch::kUInt32)
+    CHECK_TORCH_TENSOR_DTYPE(stats, torch::kInt32)
+    CHECK_TORCH_TENSOR_DEVICE(src)
+    CHECK_TORCH_TENSOR_DEVICE(labels)
+    CHECK_TORCH_TENSOR_DEVICE(stats)
+
+    const int H  = src.size(0);
+    const int W  = src.size(1);
+    const int CH = src.dim() == 2 ? 1 : src.size(2);
+
+    TORCH_CHECK(CH == 1, "CH must be 1")
+    TORCH_CHECK(stats.dim() == 2 && stats.size(1) == 5, "stats must be (N, 5)")
+
+    const int max_output_size = stats.size(0);
+    const int max_labels      = H * W + 1;
+
+    const uint8_t *g_image  = reinterpret_cast<const uint8_t *>(src.data_ptr());
+    uint32_t      *g_labels = reinterpret_cast<uint32_t *>(labels.data_ptr());
+
+    dim3 block(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3 grid(divUp(W, block.x), divUp(H, block.y));
+
+    // 1. 执行连通域标记
+    if (connectivity == 8)
+    {
+        init_labels<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        init_labels<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+
+    if (connectivity == 8)
+    {
+        label_reduction<8><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+    else if (connectivity == 4)
+    {
+        label_reduction<4><<<grid, block>>>(g_labels, g_image, W, H);
+    }
+
+    resolve_labels<<<grid, block>>>(g_labels, W, H);
+    resolve_background<<<grid, block>>>(g_labels, g_image, W, H);
+
+    // 2. 分配临时统计数组 (SoA 格式)
+    auto options_u32 = torch::TensorOptions().dtype(torch::kUInt32).device(src.device());
+    auto options_i32 = torch::TensorOptions().dtype(torch::kInt32).device(src.device());
+
+    torch::Tensor g_area  = torch::zeros({max_labels}, options_u32);
+    torch::Tensor g_min_x = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_min_y = torch::full({max_labels}, INT_MAX, options_i32);
+    torch::Tensor g_max_x = torch::full({max_labels}, INT_MIN, options_i32);
+    torch::Tensor g_max_y = torch::full({max_labels}, INT_MIN, options_i32);
+
+    uint32_t *d_area  = reinterpret_cast<uint32_t *>(g_area.data_ptr());
+    int      *d_min_x = reinterpret_cast<int *>(g_min_x.data_ptr());
+    int      *d_min_y = reinterpret_cast<int *>(g_min_y.data_ptr());
+    int      *d_max_x = reinterpret_cast<int *>(g_max_x.data_ptr());
+    int      *d_max_y = reinterpret_cast<int *>(g_max_y.data_ptr());
+
+    // 3. 计算统计信息 (使用优化的 warp 级 kernel)
+    calc_stats_kernel_optimized_fast<<<grid, block>>>(g_labels, d_area, d_min_x, d_min_y, d_max_x, d_max_y, W, H,
+                                                      max_labels);
+
+    // 4. 紧凑化输出，直接写入 AoS 格式
+    torch::Tensor g_total_count = torch::zeros({1}, options_u32);
+    uint32_t     *d_total_count = reinterpret_cast<uint32_t *>(g_total_count.data_ptr());
+    int32_t      *d_stats       = reinterpret_cast<int32_t *>(stats.data_ptr());
+
+    dim3 block1d(256);
+    dim3 grid1d(divUp(max_labels, block1d.x));
+
+    compact_stats_kernel<<<grid1d, block1d>>>(d_area, d_min_x, d_min_y, d_max_x, d_max_y, d_stats, d_total_count,
+                                              max_labels, max_output_size);
+
+    // 返回连通域数量 tensor，由外部同步后获取值
+    return g_total_count;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     TORCH_BINDING_COMMON_EXTENSION(connectedComponent)
+    TORCH_BINDING_COMMON_EXTENSION(connectedComponentWithStats)
+    TORCH_BINDING_COMMON_EXTENSION(connectedComponentWithStatsOptimized)
+    TORCH_BINDING_COMMON_EXTENSION(connectedComponentWithStatsOptimizedFast)
 }
