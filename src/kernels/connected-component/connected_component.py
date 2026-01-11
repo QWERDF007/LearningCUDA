@@ -228,8 +228,8 @@ def run_benchmark(
     return out, mean_time
 
 
-Hs = [1024]
-Ws = [1024]
+Hs = [1024, 4096]
+Ws = [1024, 4096]
 Sizes = [(H, W) for H in Hs for W in Ws]
 
 for H, W in Sizes:
