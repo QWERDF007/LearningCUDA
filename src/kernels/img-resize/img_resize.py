@@ -1,16 +1,10 @@
 
 import time
-import math
-import re
 from pathlib import Path
-from functools import partial
-from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from torch.utils.cpp_extension import load
 
-import numpy as np
 import cv2
 
 torch.set_grad_enabled(False)
@@ -46,6 +40,15 @@ lib = load(
     extra_cflags=["-std=c++17"],               
 )
 
+WARMUP_ITERS = 20
+BENCH_ITERS = 1000
+
+HS = [100, 10]
+WS = [10, 100]
+SCALES = [0.3, 1.3, 1.8]
+SIZES = [(h, w, s) for h in HS for w in WS for s in SCALES]
+INTER_TYPE = "INTER_AREA"
+
 
 def run_benchmark(
     perf_func: callable,
@@ -54,35 +57,33 @@ def run_benchmark(
     dW: int,
     tag: str,
     interpolation: int,
-    warmup: int = 20,
-    iters: int = 1000,
+    warmup: int = WARMUP_ITERS,
+    iters: int = BENCH_ITERS,
     show_all: bool = False,
 ):
     """
     性能基准测试函数
     用于测量CUDA核函数的执行时间性能
     """
-    # warmup
-    
-    for i in range(warmup):
-        _ = perf_func(a, dH, dW)
-    
-    torch.cuda.synchronize()
-    
-    start = time.time()
-    
-    for i in range(iters):
+    for _ in range(warmup):
         out = perf_func(a, dH, dW)
-    
+
     torch.cuda.synchronize()
+
+    start = time.perf_counter()
+
+    for _ in range(iters):
+        out = perf_func(a, dH, dW)
+
+    torch.cuda.synchronize()
+
+    end = time.perf_counter()
+
+    total_time = (end - start) * 1000
+    mean_time = total_time / iters
     
-    end = time.time()
-    
-    total_time = (end - start) * 1000 
-    mean_time = total_time / iters 
     expected = cv2.resize(a.cpu().numpy(), (dW, dH), interpolation=interpolation)
     out_np = out.cpu().numpy()
-
     mismatch_info = compute_accuracy_info(out_np, expected)
 
     out_info = f"out_{tag}" 
@@ -94,21 +95,7 @@ def run_benchmark(
     
     return out, mean_time, tag
 
-# Hs = [2, 45, 151, 224, 1024]
-# Ws = [2, 200, 320, 448, 2048]
-Hs = [1024]
-Ws = [1024]
-Ss = [0.3, 0.5, 0.9, 1.7, 2.0, 2.4]
-# Ss = [0.1]
-Sizes = [(H, W, S) for H in Hs for W in Ws for S in Ss]
-INTER_TYPES =[
-    'INTER_LINEAR', 'INTER_NEAREST', 'INTER_CUBIC', 'INTER_LANCZOS4', 'INTER_AREA', 
-    'INTER_NEAREST_EXACT', 'INTER_LINEAR_EXACT', 'ALL'
-]
-INTER_TYPE = 'INTER_LINEAR_EXACT'
-
-
-for H, W, S in Sizes:
+for H, W, S in SIZES:
     print("-" * 85)
     print(" " * 40 + f"H={H}, W={W}, S={S}")
     print("-" * 85)

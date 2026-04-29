@@ -717,7 +717,7 @@ __device__ __forceinline__ CT HResizeArea(T *src, const int sy, const int src_w,
     // 右边界部分像素
     if (fsx2 - sx2 > 1e-3 && sx2 < src_w)
     {
-        CT alpha = (CT)((fsx2 - sx2) / cellWidthX);
+        CT alpha = (CT)(min((fsx2 - sx2), 1.0) / cellWidthX);
         row_sum += src[sy * src_line_width + sx2 * CH + ch] * alpha;
     }
 
@@ -796,6 +796,106 @@ __global__ void resize_area_kernel(T *src, T *dst, const double scale_x, const d
     }
 }
 
+template<int CH>
+__global__ void u8_resize_area_exact_kernel(const uint8_t *src, uint8_t *dst, const double scale_x,
+                                            const double scale_y, const int src_h, const int src_w,
+                                            const int src_line_width, const int dst_h, const int dst_w,
+                                            const int dst_line_width, const int dst_N)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= dst_N)
+        return;
+
+    const int dst_x    = idx % dst_w;
+    const int dst_y    = idx / dst_w;
+    const int dst_base = dst_y * dst_line_width + dst_x * CH;
+
+    const double fsx1      = dst_x * scale_x;
+    const double fsx2      = fsx1 + scale_x;
+    const double cellWidth = min(scale_x, (double)src_w - fsx1);
+    int          sx1       = __double2int_ru(fsx1);
+    int          sx2       = __double2int_rd(fsx2);
+    sx2                    = min(sx2, src_w - 1);
+    sx1                    = min(sx1, sx2);
+
+    const double fsy1       = dst_y * scale_y;
+    const double fsy2       = fsy1 + scale_y;
+    const double cellHeight = min(scale_y, (double)src_h - fsy1);
+    int          sy1        = __double2int_ru(fsy1);
+    int          sy2        = __double2int_rd(fsy2);
+    sy2                     = min(sy2, src_h - 1);
+    sy1                     = min(sy1, sy2);
+
+#pragma unroll
+    for (int c = 0; c < CH; ++c)
+    {
+        double sum = 0.0;
+
+        if (sy1 - fsy1 > 1e-3)
+        {
+            const int sy = sy1 - 1;
+            if (sy >= 0)
+            {
+                const double beta    = (sy1 - fsy1) / cellHeight;
+                double       row_sum = 0.0;
+
+                if (sx1 - fsx1 > 1e-3)
+                {
+                    const int sx = sx1 - 1;
+                    if (sx >= 0)
+                        row_sum += src[sy * src_line_width + sx * CH + c] * ((sx1 - fsx1) / cellWidth);
+                }
+                for (int sx = sx1; sx < sx2; ++sx)
+                    row_sum += src[sy * src_line_width + sx * CH + c] * (1.0 / cellWidth);
+                if (fsx2 - sx2 > 1e-3)
+                    row_sum
+                        += src[sy * src_line_width + sx2 * CH + c] * (min(min(fsx2 - sx2, 1.0), cellWidth) / cellWidth);
+
+                sum += row_sum * beta;
+            }
+        }
+
+        for (int sy = sy1; sy < sy2; ++sy)
+        {
+            const double beta    = 1.0 / cellHeight;
+            double       row_sum = 0.0;
+
+            if (sx1 - fsx1 > 1e-3)
+            {
+                const int sx = sx1 - 1;
+                if (sx >= 0)
+                    row_sum += src[sy * src_line_width + sx * CH + c] * ((sx1 - fsx1) / cellWidth);
+            }
+            for (int sx = sx1; sx < sx2; ++sx) row_sum += src[sy * src_line_width + sx * CH + c] * (1.0 / cellWidth);
+            if (fsx2 - sx2 > 1e-3)
+                row_sum += src[sy * src_line_width + sx2 * CH + c] * (min(min(fsx2 - sx2, 1.0), cellWidth) / cellWidth);
+
+            sum += row_sum * beta;
+        }
+
+        if (fsy2 - sy2 > 1e-3)
+        {
+            const int    sy      = sy2;
+            const double beta    = min(min(fsy2 - sy2, 1.0), cellHeight) / cellHeight;
+            double       row_sum = 0.0;
+
+            if (sx1 - fsx1 > 1e-3)
+            {
+                const int sx = sx1 - 1;
+                if (sx >= 0)
+                    row_sum += src[sy * src_line_width + sx * CH + c] * ((sx1 - fsx1) / cellWidth);
+            }
+            for (int sx = sx1; sx < sx2; ++sx) row_sum += src[sy * src_line_width + sx * CH + c] * (1.0 / cellWidth);
+            if (fsx2 - sx2 > 1e-3)
+                row_sum += src[sy * src_line_width + sx2 * CH + c] * (min(min(fsx2 - sx2, 1.0), cellWidth) / cellWidth);
+
+            sum += row_sum * beta;
+        }
+
+        dst[dst_base + c] = saturate_cast<uint8_t>(sum);
+    }
+}
+
 /**
  * @brief 只在 scale_x >= 1 && scale_y >= 1 &&  scale_x - iscale_x < DBL_EPSILON && scale_y - iscale_y < DBL_EPSILON 时用
  * @param scale_x X轴缩放比例 (src_w / dst_w)
@@ -811,49 +911,22 @@ __global__ void resize_area_fast_kernel(T *src, T *dst, const double scale_x, co
 /**
  * @brief Resize Area 区域坐标和插值系数计算 (放大 upscale)
  */
-template<typename CT>
 __device__ __forceinline__ void cal_area_bilinear_interpolation(const int src_w, const int src_h, const int dst_x,
                                                                 const int dst_y, const double scale_x,
-                                                                const double scale_y, int &sx, int &sy, CT &fx, CT &fy,
-                                                                int &sx1, int &sy1)
+                                                                const double scale_y, int &sx, int &sy, float &fx,
+                                                                float &fy, int &sx1, int &sy1)
 {
-    CT src_x = dst_x * scale_x;
-    CT src_y = dst_y * scale_y;
+    double src_x = dst_x * scale_x;
+    double src_y = dst_y * scale_y;
 
-    if constexpr (std::is_same_v<CT, double>)
-    {
-        sx = __double2int_rd(src_x);
-        sy = __double2int_rd(src_y);
-    }
-    else if constexpr (std::is_same_v<CT, float>)
-    {
-        sx = __float2int_rd(src_x);
-        sy = __float2int_rd(src_y);
-    }
-    else
-    {
-        sx = __double2int_rd(src_x);
-        sy = __double2int_rd(src_y);
-    }
+    sx = __double2int_rd(src_x);
+    sy = __double2int_rd(src_y);
 
-    fx = (CT)((dst_x + 1) - (sx + 1) / scale_x);
-    fy = (CT)((dst_y + 1) - (sy + 1) / scale_y);
+    float fxf = (float)((dst_x + 1) - (sx + 1) / scale_x);
+    float fyf = (float)((dst_y + 1) - (sy + 1) / scale_y);
 
-    if constexpr (std::is_same_v<CT, double>)
-    {
-        fx = fx <= 0 ? 0.0 : fx - __double2int_rd(fx);
-        fy = fy <= 0 ? 0.0 : fy - __double2int_rd(fy);
-    }
-    else if constexpr (std::is_same_v<CT, float>)
-    {
-        fx = fx <= 0 ? 0.0 : fx - __float2int_rd(fx);
-        fy = fy <= 0 ? 0.0 : fy - __float2int_rd(fy);
-    }
-    else
-    {
-        fx = fx <= 0 ? 0.0 : fx - __double2int_rd(fx);
-        fy = fy <= 0 ? 0.0 : fy - __double2int_rd(fy);
-    }
+    fx = fxf <= 0.f ? 0.f : fxf - __float2int_rd(fxf);
+    fy = fyf <= 0.f ? 0.f : fyf - __float2int_rd(fyf);
 
     // ---- 边界处理 ----
     if (sx < 0)
@@ -872,7 +945,7 @@ __device__ __forceinline__ void cal_area_bilinear_interpolation(const int src_w,
         sy = 0;
         fy = 0.0;
     }
-    else if (sx >= src_h - 1)
+    else if (sy >= src_h - 1)
     {
         sy = src_h - 1;
         fy = 0.0;
@@ -899,10 +972,10 @@ __global__ void resize_area_bilinear_kernel(T *src, T *dst, const double scale_x
     const int dst_x = idx % dst_w;
     const int dst_y = idx / dst_w;
 
-    int sx, sy;
-    CT  fx, fy;
-    int sx1, sy1;
-    cal_area_bilinear_interpolation<CT>(src_w, src_h, dst_x, dst_y, scale_x, scale_y, sx, sy, fx, fy, sx1, sy1);
+    int   sx, sy;
+    float fx, fy;
+    int   sx1, sy1;
+    cal_area_bilinear_interpolation(src_w, src_h, dst_x, dst_y, scale_x, scale_y, sx, sy, fx, fy, sx1, sy1);
 
     // 下面和双线性插值一样的处理
     CT w1 = (1 - fx) * (1 - fy);
@@ -942,7 +1015,7 @@ __global__ void u8_resize_area_bilinear_kernel(uint8_t *src, uint8_t *dst, const
     int   sx, sy;
     float fx, fy;
     int   sx1, sy1;
-    cal_area_bilinear_interpolation<float>(src_w, src_h, dst_x, dst_y, scale_x, scale_y, sx, sy, fx, fy, sx1, sy1);
+    cal_area_bilinear_interpolation(src_w, src_h, dst_x, dst_y, scale_x, scale_y, sx, sy, fx, fy, sx1, sy1);
 
     short alpha0 = saturate_cast<short>((1.0f - fx) * (float)INTER_RESIZE_COEF_SCALE);
     short alpha1 = INTER_RESIZE_COEF_SCALE - alpha0;
@@ -1182,6 +1255,40 @@ __global__ void resize_bilinear_bitexact_kernel(T *src, T *dst, const double sca
         return dst;                                                                                                   \
     }
 
+#define TORCH_BINDING_RESIZE_AREA_U8_EXACT(tag, cal_type)                                                             \
+    torch::Tensor tag##_uint8_t##_##cal_type(torch::Tensor src, const int dst_h, const int dst_w)                     \
+    {                                                                                                                 \
+        CHECK_TORCH_TENSOR_DTYPE(src, (torch::kUInt8))                                                                \
+        const int     N             = dst_h * dst_w;                                                                  \
+        const int     src_h         = src.size(0);                                                                    \
+        const int     src_w         = src.size(1);                                                                    \
+        const int     src_ch        = src.dim() == 2 ? 1 : src.size(2);                                               \
+        const int     src_line_size = src_w * src_ch;                                                                 \
+        const int     dst_line_size = dst_w * src_ch;                                                                 \
+        auto          options       = torch::TensorOptions().dtype(src.dtype()).device(torch::kCUDA, 0);              \
+        torch::Tensor dst                                                                                             \
+            = src.dim() == 2 ? torch::zeros({dst_h, dst_w}, options) : torch::zeros({dst_h, dst_w, src_ch}, options); \
+        const double inv_scale_x = (double)dst_w / src_w;                                                             \
+        const double inv_scale_y = (double)dst_h / src_h;                                                             \
+        const double scale_x     = 1. / inv_scale_x;                                                                  \
+        const double scale_y     = 1. / inv_scale_y;                                                                  \
+        dim3         block(THREADS);                                                                                  \
+        dim3         grid(divUp(N, THREADS));                                                                         \
+        if (src_ch == 1)                                                                                              \
+        {                                                                                                             \
+            u8_resize_area_exact_kernel<1><<<grid, block>>>(                                                          \
+                reinterpret_cast<uint8_t *>(src.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), scale_x,    \
+                scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size, N);                                \
+        }                                                                                                             \
+        else if (src_ch == 3)                                                                                         \
+        {                                                                                                             \
+            u8_resize_area_exact_kernel<3><<<grid, block>>>(                                                          \
+                reinterpret_cast<uint8_t *>(src.data_ptr()), reinterpret_cast<uint8_t *>(dst.data_ptr()), scale_x,    \
+                scale_y, src_h, src_w, src_line_size, dst_h, dst_w, dst_line_size, N);                                \
+        }                                                                                                             \
+        return dst;                                                                                                   \
+    }
+
 TORCH_BINDING_RESIZE(resize_bilinear, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE(resize_bilinear, torch::kFloat32, float, double, 1)
 
@@ -1217,8 +1324,8 @@ TORCH_BINDING_RESIZE(u8_resize_lanczos, torch::kUInt8, uint8_t, float, 1)
 
 TORCH_BINDING_RESIZE(resize_area, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE(resize_area, torch::kFloat32, float, double, 1)
-TORCH_BINDING_RESIZE(resize_area, torch::kUInt8, uint8_t, float, 1)
-TORCH_BINDING_RESIZE(resize_area, torch::kUInt8, uint8_t, double, 1)
+TORCH_BINDING_RESIZE_AREA_U8_EXACT(resize_area, float)
+TORCH_BINDING_RESIZE_AREA_U8_EXACT(resize_area, double)
 TORCH_BINDING_RESIZE(resize_area_bilinear, torch::kFloat32, float, float, 1)
 TORCH_BINDING_RESIZE(resize_area_bilinear, torch::kFloat32, float, double, 1)
 TORCH_BINDING_RESIZE(resize_area_bilinear, torch::kUInt8, uint8_t, float, 1)
